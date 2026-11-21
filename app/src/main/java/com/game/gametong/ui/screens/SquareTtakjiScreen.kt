@@ -153,7 +153,7 @@ fun SquareTtakjiScreen(
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ScorePill("나", "${match.playerScore}", Inks.Red, Modifier.weight(1f))
+                    ScorePill(if (twoPlayer) "1P" else "나", "${match.playerScore}", Inks.Red, Modifier.weight(1f))
                     ScorePill("노면", surface.label, Inks.Blue, Modifier.weight(1f))
                     ScorePill(if (twoPlayer) "2P" else "AI", "${match.aiScore}", Inks.Blue, Modifier.weight(1f))
                 }
