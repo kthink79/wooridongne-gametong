@@ -314,7 +314,7 @@ class MarbleHoleGame(
     companion object {
         const val HOLE_R = 54f
         const val MARBLE_R = 26f
-        const val CATCH_SPEED = 430f
+        const val CATCH_SPEED = 470f
         const val MAX_TURNS = 10
         const val WIN_SCORE = 3
     }
@@ -394,7 +394,7 @@ class MarbleHoleGame(
             }
             if (sunk) continue
             for ((index, hole) in holes.withIndex()) {
-                val near = mine.pos.distanceTo(hole) <= HOLE_R * 0.78f
+                val near = mine.pos.distanceTo(hole) <= HOLE_R * 0.88f
                 if (near && mine.vel.length() <= CATCH_SPEED) {
                     holeIndex = index
                     mine.pos = hole
