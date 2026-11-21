@@ -8,3 +8,6 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+
+# Gradle 가 HOME 을 잘못 잡을 때 생기는 캐시 폴더
+\?/
