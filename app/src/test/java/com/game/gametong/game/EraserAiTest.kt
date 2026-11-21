@@ -21,13 +21,19 @@ class EraserAiTest {
     }
 
     @Test
-    fun `알까기 AI는 상대를 책상 밖으로 민다`() {
+    fun `알까기 AI는 상대를 자기 쪽 가장자리로 민다`() {
         val world = AlkkaegiMatch(EraserType.STANDARD, EraserType.STANDARD).world
+        val startY = world.opponent.pos.y
         val velocity = EraserAi.choose(world, Side.PLAYER, AiMode.ALKKAEGI, 1f, Random(1))
         val sim = world.copy()
         sim.flick(Side.PLAYER, velocity)
         sim.settle()
-        assertTrue(sim.opponent.fallen)
+        // 상대를 자기 진영 가장자리(위쪽)로 최소 150단위 밀어내거나 떨어뜨려야 한다
+        assertTrue(
+            "상대가 밀려야 한다: $startY -> ${sim.opponent.pos.y}",
+            sim.opponent.fallen || sim.opponent.pos.y < startY - 150f,
+        )
+        assertTrue(!sim.player.fallen)
     }
 
     @Test

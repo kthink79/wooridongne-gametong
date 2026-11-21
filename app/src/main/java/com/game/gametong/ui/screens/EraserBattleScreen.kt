@@ -165,7 +165,9 @@ fun EraserBattleScreen(
 
                 match.phase == MatchPhase.AIMING && match.turn == Side.AI && !twoPlayer -> {
                     delay(620)
-                    val velocity = match.aiVelocity(0.82f)
+                    // 알까기는 한 방에 판이 끝날 수 있어 AI 실력을 조금 낮춰 첫 판이 일방적이지 않게 한다.
+                    val accuracy = if (match is AlkkaegiMatch) 0.62f else 0.82f
+                    val velocity = match.aiVelocity(accuracy)
                     match.flick(velocity)
                     frame++
                     syncHud()

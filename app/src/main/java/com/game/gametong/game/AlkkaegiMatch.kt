@@ -114,7 +114,7 @@ class AlkkaegiMatch(
 
     companion object {
         const val ROUNDS_TO_WIN = 2
-        val PLAYER_HOME = Vec2(500f, 1040f)
-        val AI_HOME = Vec2(500f, 460f)
+        val PLAYER_HOME = Vec2(500f, 970f)
+        val AI_HOME = Vec2(500f, 530f)
     }
 }
