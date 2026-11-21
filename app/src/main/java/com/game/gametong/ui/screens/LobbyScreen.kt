@@ -38,19 +38,22 @@ import com.game.gametong.ui.theme.Inks
 private data class Tile(
     val emoji: String,
     val label: String,
+    val detail: String,
     val color: Color,
     val route: Route,
 )
 
-private val tiles = listOf(
-    Tile("🟥", "딱지치기", Inks.Red, Route.Ttakji),
-    Tile("🔮", "구슬치기", Inks.Blue, Route.Marble),
-    Tile("🧽", "지우개 따먹기", Inks.Green, Route.EraserMenu),
-    Tile("🫘", "공기놀이", Inks.Gold, Route.Gonggi),
-    Tile("🎁", "이벤트 뿌리기", Inks.Purple, Route.Sprinkle),
-    Tile("🕹️", "연습게임", Inks.Teal, Route.EraserMenu),
-    Tile("🏆", "랭킹", Inks.Orange, Route.Ranking),
-    Tile("⚙️", "설정", Color(0xFF7A7466), Route.Settings),
+private val playTiles = listOf(
+    Tile("🟥", "딱지치기", "네모 뒤집기 2.5D\n동그란 3종", Inks.Red, Route.Ttakji),
+    Tile("🔮", "구슬치기", "원 안 쳐내기\n구멍치기", Inks.Blue, Route.Marble),
+    Tile("🧽", "지우개 따먹기", "알까기\n레슬링 3카운트", Inks.Green, Route.EraserMenu),
+)
+
+private val extraTiles = listOf(
+    Tile("🫘", "공기놀이", "타이밍 잡기", Inks.Gold, Route.Gonggi),
+    Tile("🎁", "이벤트 뿌리기", "명성 올리기", Inks.Purple, Route.Sprinkle),
+    Tile("🏆", "랭킹", "동네 순위", Inks.Orange, Route.Ranking),
+    Tile("⚙️", "설정", "조준·진동", Color(0xFF7A7466), Route.Settings),
 )
 
 @Composable
@@ -89,7 +92,18 @@ fun LobbyScreen(
                 color = Inks.Wood,
                 modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
             )
-            GameGrid(onOpen)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (tile in playTiles) {
+                    PlayTile(tile, Modifier.weight(1f)) { onOpen(tile.route) }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (tile in extraTiles) {
+                    MiniTile(tile, Modifier.weight(1f)) { onOpen(tile.route) }
+                }
+            }
+
             Spacer(Modifier.height(14.dp))
             Box(
                 modifier = Modifier
@@ -99,8 +113,8 @@ fun LobbyScreen(
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "체험판 v0.1.0-demo — 지우개 따먹기 두 모드는 실제 플레이 가능, " +
-                        "딱지·구슬·공기놀이는 맛보기 데모입니다. 랭킹·명성은 아직 기기에만 저장됩니다.",
+                    text = "체험판 v0.2.0 — 딱지치기(네모 2.5D 물리·동그란 3종)와 구슬치기 두 종목을 바로 플레이할 수 있습니다. " +
+                        "지우개 따먹기 두 모드도 그대로! 공기놀이·뿌리기는 맛보기 데모입니다.",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = Inks.SoftInk,
@@ -136,12 +150,12 @@ private fun NoticeBanner() {
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "첫 접속 이벤트 진행중 · 탕정면 놀이판 오픈!",
+                text = "딱지·구슬 정식 종목 오픈! 탕정면 놀이판에서 겨뤄 보세요",
                 color = Inks.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
-                maxLines = 1,
+                maxLines = 2,
             )
             Text("›", color = Inks.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
         }
@@ -226,43 +240,62 @@ private fun CharacterCard(player: PlayerState, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun GameGrid(onOpen: (Route) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for (rowIndex in 0 until 2) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (colIndex in 0 until 4) {
-                    val tile = tiles[rowIndex * 4 + colIndex]
-                    GameTile(tile, Modifier.weight(1f)) { onOpen(tile.route) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GameTile(tile: Tile, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun PlayTile(tile: Tile, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(
         modifier = modifier
-            .shadow(4.dp, RoundedCornerShape(16.dp), clip = false)
-            .clip(RoundedCornerShape(16.dp))
+            .shadow(5.dp, RoundedCornerShape(18.dp), clip = false)
+            .clip(RoundedCornerShape(18.dp))
             .background(Brush.verticalGradient(listOf(tile.color, tile.color.copy(alpha = 0.82f))))
-            .border(3.dp, Inks.Wood, RoundedCornerShape(16.dp))
+            .border(3.dp, Inks.Wood, RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 9.dp, horizontal = 3.dp),
+            .padding(vertical = 12.dp, horizontal = 5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Text(tile.emoji, fontSize = 26.sp)
+        Text(tile.emoji, fontSize = 34.sp)
         Spacer(Modifier.height(4.dp))
         Text(
             text = tile.label,
             color = Inks.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Black,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = tile.detail,
+            color = Inks.White.copy(alpha = 0.92f),
             fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            lineHeight = 13.sp,
+            maxLines = 2,
+        )
+    }
+}
+
+@Composable
+private fun MiniTile(tile: Tile, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier = modifier
+            .shadow(4.dp, RoundedCornerShape(14.dp), clip = false)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Brush.verticalGradient(listOf(tile.color, tile.color.copy(alpha = 0.82f))))
+            .border(3.dp, Inks.Wood, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 9.dp, horizontal = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(tile.emoji, fontSize = 24.sp)
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = tile.label,
+            color = Inks.White,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center,
             maxLines = 2,
-            lineHeight = 13.sp,
+            lineHeight = 14.sp,
         )
-        Spacer(Modifier.height(1.dp))
     }
 }

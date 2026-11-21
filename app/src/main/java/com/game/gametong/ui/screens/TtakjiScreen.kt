@@ -1,21 +1,11 @@
 package com.game.gametong.ui.screens
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,292 +14,324 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.game.gametong.ui.components.DemoNotice
+import com.game.gametong.game.RoundMode
+import com.game.gametong.game.TtakjiMaterial
+import com.game.gametong.game.TtakjiSurface
 import com.game.gametong.ui.components.FunButton
+import com.game.gametong.ui.components.OptionCard
 import com.game.gametong.ui.components.PaperCard
 import com.game.gametong.ui.components.ScreenHeader
+import com.game.gametong.ui.components.SelectChip
+import com.game.gametong.ui.components.SectionTitle
 import com.game.gametong.ui.theme.Inks
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlin.math.cos
 
+/**
+ * 딱지치기 허브 — 네모 딱지(2.5D 물리)와 동그란 딱지(3종 놀이)를 먼저 고르고,
+ * 세부 규칙(노면·재질·상대)을 정한 뒤 바로 시작한다.
+ */
 @Composable
-fun TtakjiScreen(onBack: () -> Unit) {
-    var tries by remember { mutableIntStateOf(0) }
-    var hits by remember { mutableIntStateOf(0) }
-    var flipped by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("힘 게이지가 초록 구간에 올 때 쳐 보세요") }
-    val scope = rememberCoroutineScope()
-    val transition = rememberInfiniteTransition(label = "needle")
-    val needle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(980, easing = LinearEasing), RepeatMode.Reverse),
-        label = "needleValue",
-    )
-    val flipAngle by animateFloatAsState(
-        targetValue = if (flipped) 180f else 0f,
-        animationSpec = tween(420),
-        label = "flip",
-    )
+fun TtakjiScreen(
+    onBack: () -> Unit,
+    onStartSquare: (TtakjiSurface, TtakjiMaterial, Int, TtakjiMaterial, Int, Boolean) -> Unit,
+    onStartRound: (RoundMode, Boolean) -> Unit,
+) {
+    var section by remember { mutableIntStateOf(0) } // 0 = 네모, 1 = 동그란
+    var surface by remember { mutableStateOf(TtakjiSurface.MARU) }
+    var myMaterial by remember { mutableStateOf(TtakjiMaterial.COLOR_PAPER) }
+    var myThickness by remember { mutableIntStateOf(2) }
+    var aiMaterial by remember { mutableStateOf(TtakjiMaterial.NEWSPAPER) }
+    var aiThickness by remember { mutableIntStateOf(2) }
+    var roundMode by remember { mutableStateOf(RoundMode.STICK) }
+    var twoPlayer by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Inks.Kraft, Inks.KraftDeep)))) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Inks.Kraft, Inks.KraftDeep, Inks.Kraft)))
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             ScreenHeader(title = "딱지치기", onBack = onBack)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(horizontal = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                DemoNotice("체험판 — 네모 딱지 뒤집기 손맛만 맛보는 미니 데모입니다. 정식 종목은 다음 업데이트에서 열립니다.")
-
-                Spacer(Modifier.height(18.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.62f)
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(Color(0xFFF7E7C6))
-                        .border(3.dp, Inks.Wood, RoundedCornerShape(18.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val cx = size.width / 2f
-                        val cy = size.height / 2f
-                        val side = size.minDimension * 0.62f
-                        val squash = cos(Math.toRadians(flipAngle.toDouble())).toFloat()
-                        rotate(degrees = 0f, pivot = Offset(cx, cy)) {
-                            // 그림자
-                            drawRoundRect(
-                                color = Color(0x33000000),
-                                topLeft = Offset(cx - side / 2f * squash + 6f, cy - side / 2f + 10f),
-                                size = Size(side * squash, side),
-                                cornerRadius = CornerRadius(10f),
-                            )
-                            val topLeft = Offset(cx - side / 2f * squash, cy - side / 2f)
-                            val s = Size(side * squash, side)
-                            // 빨강/파랑 두 조각
-                            drawRect(color = Inks.Red, topLeft = topLeft, size = s)
-                            val path = Path().apply {
-                                moveTo(topLeft.x, topLeft.y)
-                                lineTo(topLeft.x + s.width, topLeft.y + s.height)
-                                lineTo(topLeft.x, topLeft.y + s.height)
-                                close()
-                            }
-                            drawPath(path, Inks.Blue)
-                            drawRect(
-                                color = Inks.Wood,
-                                topLeft = topLeft,
-                                size = s,
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f),
-                            )
-                            drawLine(
-                                color = Inks.Wood,
-                                start = Offset(topLeft.x, topLeft.y),
-                                end = Offset(topLeft.x + s.width, topLeft.y + s.height),
-                                strokeWidth = 3f,
-                            )
-                        }
-                    }
+                SectionTitle("어떤 딱지로 놀까?")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionCard(
+                        title = "네모 딱지",
+                        subtitle = "뒤집기 2.5D 물리 · 노면·피로도·부상",
+                        emoji = "🟥",
+                        selected = section == 0,
+                        color = Inks.Red,
+                        modifier = Modifier.weight(1f),
+                    ) { section = 0 }
+                    OptionCard(
+                        title = "동그란 딱지",
+                        subtitle = "붙여먹기 · 멀리 날리기 · 입바람",
+                        emoji = "🟡",
+                        selected = section == 1,
+                        color = Inks.Gold,
+                        modifier = Modifier.weight(1f),
+                    ) { section = 1 }
                 }
 
-                Spacer(Modifier.height(18.dp))
-                PaperCard(modifier = Modifier.fillMaxWidth(), padding = 14.dp) {
-                    Column {
-                        Text("힘 게이지", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
-                        Spacer(Modifier.height(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Inks.Wood.copy(alpha = 0.15f))
-                                .border(2.dp, Inks.Wood, RoundedCornerShape(10.dp))
-                        ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawRect(
-                                    color = Inks.Green.copy(alpha = 0.55f),
-                                    topLeft = Offset(size.width * 0.62f, 0f),
-                                    size = Size(size.width * 0.26f, size.height),
-                                )
-                                drawLine(
-                                    color = Inks.Red,
-                                    start = Offset(size.width * needle, 0f),
-                                    end = Offset(size.width * needle, size.height),
-                                    strokeWidth = 8f,
-                                )
-                            }
+                if (section == 0) {
+                    SquareSetup(
+                        surface = surface,
+                        onSurface = { surface = it },
+                        myMaterial = myMaterial,
+                        onMyMaterial = { myMaterial = it },
+                        myThickness = myThickness,
+                        onMyThickness = { myThickness = it },
+                        aiMaterial = aiMaterial,
+                        onAiMaterial = { aiMaterial = it },
+                        aiThickness = aiThickness,
+                        onAiThickness = { aiThickness = it },
+                    )
+                } else {
+                    RoundSetup(
+                        mode = roundMode,
+                        onMode = { roundMode = it },
+                    )
+                }
+
+                PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                if (twoPlayer) "2인 번갈아 (한 기기)" else "AI와 대전",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Inks.Wood,
+                            )
+                            Text(
+                                if (twoPlayer) "두 사람이 번갈아 조작합니다."
+                                else "AI가 각도를 계산해 칩니다.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Inks.SoftInk,
+                            )
                         }
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = message,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Inks.SoftInk,
+                        Switch(
+                            checked = twoPlayer,
+                            onCheckedChange = { twoPlayer = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Inks.White,
+                                checkedTrackColor = Inks.Green,
+                                uncheckedThumbColor = Inks.White,
+                                uncheckedTrackColor = Inks.Gray,
+                            ),
                         )
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
                 FunButton(
-                    text = if (tries >= 5) "다시 하기" else "지금 쳐보기",
+                    text = if (section == 0) "네모 딱지치기 시작" else "${roundMode.title} 시작",
                     modifier = Modifier.fillMaxWidth(),
-                    color = Inks.Red,
+                    color = if (section == 0) Inks.Red else Inks.Gold,
+                    textColor = if (section == 0) Inks.White else Inks.Ink,
+                    fontSize = 20,
                 ) {
-                    if (tries >= 5) {
-                        tries = 0
-                        hits = 0
-                        message = "힘 게이지가 초록 구간에 올 때 쳐 보세요"
-                        return@FunButton
-                    }
-                    tries++
-                    val hit = needle in 0.62f..0.88f
-                    if (hit) {
-                        hits++
-                        flipped = true
-                        message = "뒤집혔다! 딱지 한 장 획득 (${hits}/${tries})"
-                        scope.launch {
-                            delay(520)
-                            flipped = false
-                        }
+                    if (section == 0) {
+                        onStartSquare(surface, myMaterial, myThickness, aiMaterial, aiThickness, twoPlayer)
                     } else {
-                        message = if (needle < 0.62f) "너무 약했다 — 딱지가 반만 들렸다" else "너무 세게 쳤다 — 딱지가 날아갔다"
+                        onStartRound(roundMode, twoPlayer)
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = "5번 중 ${hits}번 성공",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Inks.Wood,
-                )
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(20.dp))
             }
         }
     }
 }
 
 @Composable
-fun GonggiScreen(onBack: () -> Unit) {
-    var catches by remember { mutableIntStateOf(0) }
-    var tries by remember { mutableIntStateOf(0) }
-    var message by remember { mutableStateOf("구슬이 초록 구간에 들어올 때 잡으세요") }
-    val transition = rememberInfiniteTransition(label = "gonggi")
-    val marker by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(860, easing = LinearEasing), RepeatMode.Reverse),
-        label = "marker",
-    )
-
-    Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Inks.Kraft, Inks.KraftDeep)))) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            ScreenHeader(title = "공기놀이", onBack = onBack)
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                DemoNotice("체험판 — 공기놀이 '잡기' 타이밍만 맛보는 미니 데모입니다.")
-
-                Spacer(Modifier.height(20.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    repeat(5) { index ->
-                        val caught = index < catches
-                        Box(
-                            modifier = Modifier
-                                .width(46.dp)
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(50))
-                                .background(if (caught) Inks.Gold else Inks.Wood.copy(alpha = 0.15f))
-                                .border(3.dp, Inks.Wood, RoundedCornerShape(50)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(if (caught) "🫘" else "·", fontSize = 20.sp)
-                        }
-                    }
+private fun SquareSetup(
+    surface: TtakjiSurface,
+    onSurface: (TtakjiSurface) -> Unit,
+    myMaterial: TtakjiMaterial,
+    onMyMaterial: (TtakjiMaterial) -> Unit,
+    myThickness: Int,
+    onMyThickness: (Int) -> Unit,
+    aiMaterial: TtakjiMaterial,
+    onAiMaterial: (TtakjiMaterial) -> Unit,
+    aiThickness: Int,
+    onAiThickness: (Int) -> Unit,
+) {
+    PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Column {
+            Text("노면 고르기", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (item in TtakjiSurface.entries) {
+                    SelectChip(
+                        label = item.label,
+                        selected = item == surface,
+                        color = Inks.Blue,
+                        modifier = Modifier.weight(1f),
+                    ) { onSurface(item) }
                 }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(surface.hint, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Inks.SoftInk)
+        }
+    }
 
-                Spacer(Modifier.height(24.dp))
-                PaperCard(modifier = Modifier.fillMaxWidth(), padding = 14.dp) {
-                    Column {
-                        Text("타이밍", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
-                        Spacer(Modifier.height(10.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(30.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Inks.Wood.copy(alpha = 0.15f))
-                                .border(2.dp, Inks.Wood, RoundedCornerShape(10.dp))
-                        ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawRect(
-                                    color = Inks.Green.copy(alpha = 0.55f),
-                                    topLeft = Offset(size.width * 0.38f, 0f),
-                                    size = Size(size.width * 0.24f, size.height),
-                                )
-                                drawCircle(
-                                    color = Inks.Red,
-                                    radius = size.height * 0.32f,
-                                    center = Offset(size.width * marker, size.height / 2f),
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Text(message, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Inks.SoftInk)
-                    }
+    PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Column {
+            Text("내 딱지", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (item in TtakjiMaterial.entries) {
+                    SelectChip(
+                        label = item.label,
+                        selected = item == myMaterial,
+                        color = Inks.Red,
+                        modifier = Modifier.weight(1f),
+                    ) { onMyMaterial(item) }
                 }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("두께", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (thickness in 1..3) {
+                    SelectChip(
+                        label = when (thickness) {
+                            1 -> "얇게"
+                            2 -> "보통"
+                            else -> "두껍게"
+                        },
+                        selected = thickness == myThickness,
+                        color = Inks.Red,
+                        modifier = Modifier.weight(1f),
+                    ) { onMyThickness(thickness) }
+                }
+            }
+            Spacer(Modifier.height(5.dp))
+            Text(myMaterial.blurb, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Inks.SoftInk)
+        }
+    }
 
-                Spacer(Modifier.height(16.dp))
-                FunButton(
-                    text = if (catches >= 5) "한 판 더" else "잡기",
-                    modifier = Modifier.fillMaxWidth(),
+    PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Column {
+            Text("상대 딱지", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (item in TtakjiMaterial.entries) {
+                    SelectChip(
+                        label = item.label,
+                        selected = item == aiMaterial,
+                        color = Inks.Blue,
+                        modifier = Modifier.weight(1f),
+                    ) { onAiMaterial(item) }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (thickness in 1..3) {
+                    SelectChip(
+                        label = if (thickness == 1) "얇게" else if (thickness == 2) "보통" else "두껍게",
+                        selected = thickness == aiThickness,
+                        color = Inks.Blue,
+                        modifier = Modifier.weight(1f),
+                    ) { onAiThickness(thickness) }
+                }
+            }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "상대 딱지에는 들뜬 날개 틈이 보입니다. 그 틈을 옆에서 때리면 훨씬 잘 뒤집힙니다.",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = Inks.SoftInk,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RoundSetup(
+    mode: RoundMode,
+    onMode: (RoundMode) -> Unit,
+) {
+    PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("동그란 딱지 3종", fontSize = 15.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            for (item in RoundMode.entries) {
+                OptionCard(
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    emoji = item.emoji,
+                    selected = item == mode,
                     color = Inks.Gold,
-                    textColor = Inks.Ink,
-                ) {
-                    if (catches >= 5) {
-                        catches = 0
-                        tries = 0
-                        message = "구슬이 초록 구간에 들어올 때 잡으세요"
-                        return@FunButton
-                    }
-                    tries++
-                    if (marker in 0.38f..0.62f) {
-                        catches++
-                        message = "잡았다! (${catches}/5)"
-                    } else {
-                        message = "놓쳤다… (${tries}번 시도)"
-                    }
-                }
-                Spacer(Modifier.height(24.dp))
+                    modifier = Modifier.fillMaxWidth(),
+                ) { onMode(item) }
             }
         }
+    }
+    PaperCard(
+        modifier = Modifier.fillMaxWidth(),
+        padding = 12.dp,
+        color = Color(0xFFFFF3D6),
+    ) {
+        Column {
+            Text(mode.title, fontSize = 14.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Spacer(Modifier.height(4.dp))
+            Text(mode.howTitle, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Inks.Ink)
+        }
+    }
+}
+
+/** 공용: 두툼한 스위치 줄(필요하면 다른 화면에서도). */
+@Composable
+fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    color: Color = Inks.Green,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Inks.Paper)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Text(subtitle, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Inks.SoftInk)
+        }
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Inks.White,
+                checkedTrackColor = color,
+                uncheckedThumbColor = Inks.White,
+                uncheckedTrackColor = Inks.Gray,
+            ),
+        )
     }
 }

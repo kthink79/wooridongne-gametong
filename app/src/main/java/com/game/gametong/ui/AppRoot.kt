@@ -10,15 +10,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.game.gametong.game.EraserType
+import com.game.gametong.game.RoundMode
+import com.game.gametong.game.TtakjiMaterial
+import com.game.gametong.game.TtakjiSurface
 import com.game.gametong.ui.screens.EraserBattleScreen
 import com.game.gametong.ui.screens.EraserMenuScreen
 import com.game.gametong.ui.screens.GonggiScreen
 import com.game.gametong.ui.screens.IntroScreen
 import com.game.gametong.ui.screens.LobbyScreen
+import com.game.gametong.ui.screens.MarbleGameScreen
+import com.game.gametong.ui.screens.MarbleMode
 import com.game.gametong.ui.screens.MarbleScreen
 import com.game.gametong.ui.screens.RankingScreen
+import com.game.gametong.ui.screens.RoundTtakjiScreen
 import com.game.gametong.ui.screens.SettingsScreen
 import com.game.gametong.ui.screens.SprinkleScreen
+import com.game.gametong.ui.screens.SquareTtakjiScreen
 import com.game.gametong.ui.screens.TtakjiScreen
 
 enum class EraserMode(val title: String, val subtitle: String) {
@@ -38,7 +45,20 @@ sealed interface Route {
     ) : Route
 
     data object Ttakji : Route
+    data class SquareTtakji(
+        val surface: TtakjiSurface,
+        val playerMaterial: TtakjiMaterial,
+        val playerThickness: Int,
+        val aiMaterial: TtakjiMaterial,
+        val aiThickness: Int,
+        val twoPlayer: Boolean,
+    ) : Route
+
+    data class RoundTtakji(val mode: RoundMode, val twoPlayer: Boolean) : Route
+
     data object Marble : Route
+    data class MarblePlay(val mode: MarbleMode, val twoPlayer: Boolean) : Route
+
     data object Gonggi : Route
     data object Sprinkle : Route
     data object Ranking : Route
@@ -90,8 +110,48 @@ fun GametongApp() {
                 onExit = { route = Route.EraserMenu },
             )
 
-            Route.Ttakji -> TtakjiScreen(onBack = { route = Route.Lobby })
-            Route.Marble -> MarbleScreen(onBack = { route = Route.Lobby })
+            Route.Ttakji -> TtakjiScreen(
+                onBack = { route = Route.Lobby },
+                onStartSquare = { surface, playerMaterial, playerThickness, aiMaterial, aiThickness, twoPlayer ->
+                    route = Route.SquareTtakji(
+                        surface = surface,
+                        playerMaterial = playerMaterial,
+                        playerThickness = playerThickness,
+                        aiMaterial = aiMaterial,
+                        aiThickness = aiThickness,
+                        twoPlayer = twoPlayer,
+                    )
+                },
+                onStartRound = { mode, twoPlayer -> route = Route.RoundTtakji(mode, twoPlayer) },
+            )
+
+            is Route.SquareTtakji -> SquareTtakjiScreen(
+                surface = current.surface,
+                playerMaterial = current.playerMaterial,
+                playerThickness = current.playerThickness,
+                aiMaterial = current.aiMaterial,
+                aiThickness = current.aiThickness,
+                twoPlayer = current.twoPlayer,
+                onExit = { route = Route.Ttakji },
+            )
+
+            is Route.RoundTtakji -> RoundTtakjiScreen(
+                mode = current.mode,
+                twoPlayer = current.twoPlayer,
+                onExit = { route = Route.Ttakji },
+            )
+
+            Route.Marble -> MarbleScreen(
+                onBack = { route = Route.Lobby },
+                onStart = { mode, twoPlayer -> route = Route.MarblePlay(mode, twoPlayer) },
+            )
+
+            is Route.MarblePlay -> MarbleGameScreen(
+                mode = current.mode,
+                twoPlayer = current.twoPlayer,
+                onExit = { route = Route.Marble },
+            )
+
             Route.Gonggi -> GonggiScreen(onBack = { route = Route.Lobby })
             Route.Sprinkle -> SprinkleScreen(
                 owned = 24,
