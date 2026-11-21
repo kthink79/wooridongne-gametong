@@ -182,14 +182,11 @@ fun EraserBattleScreen(
     val dragVector: Vec2? = dragStart?.let { it - dragNow }
     val power = dragVector?.let { Flick.powerOf(it) } ?: 0f
 
-    val prediction: Vec2? = remember(
-        frame / 6,
-        dragStart,
-        dragNow,
-        canAim,
-        aimAssist,
-        match,
-    ) {
+    // 당김을 60단위로 양자화해, 손가락이 움직일 때만 예측을 다시 계산한다.
+    val dragKey: Vec2? = dragVector?.let {
+        Vec2((it.x / 60f).roundToInt().toFloat(), (it.y / 60f).roundToInt().toFloat())
+    }
+    val prediction: Vec2? = remember(dragKey, canAim, aimAssist, match) {
         val vec = dragVector
         if (aimAssist && canAim && vec != null && vec.length() > 40f) {
             val v = Flick.velocityFromDrag(vec, attacker.type)
