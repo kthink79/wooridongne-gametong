@@ -93,8 +93,11 @@ object SquareTtakjiEngine {
     /** 풀파워로 때렸을 때 딱지가 나가는 최대 속도(단위/초). */
     const val MAX_ATTACK_SPEED = 1500f
 
-    /** 이 세기 이상으로 헛스윙하면 바닥을 쳐 부상한다. */
-    const val FLOOR_HIT_POWER = 0.5f
+    /**
+     * 이 세기 이상으로 헛스윙하면 바닥을 쳐 부상한다.
+     * 부상 중 파워 상한(0.5)보다 높게 잡아, 부상 중의 약한 헛스윙이 부상을 다시 만들지 않게 한다.
+     */
+    const val FLOOR_HIT_POWER = 0.6f
 
     /** 부상 중에는 이 세기까지만 낼 수 있다. */
     const val INJURED_POWER_CAP = 0.5f
@@ -274,9 +277,9 @@ object SquareTtakjiEngine {
         var bestFlip: SquareStrike? = null
         var bestContact: SquareStrike? = null
         var bestContactRatio = -1f
-        var sweep = 0f
-        while (sweep <= 1f) {
-            for (p in 4..9) {
+        var sweep = -30f
+        while (sweep <= 30f) {
+            for (p in 4..10) {
                 val power = p / 10f
                 if (power > maxPower + 1e-4f) continue
                 for (edge in listOf(-0.95f, -0.5f, 0f, 0.5f, 0.95f)) {
