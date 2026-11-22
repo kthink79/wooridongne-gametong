@@ -64,11 +64,43 @@ data class TtakjiSpec(
 }
 
 /**
+ * 상대 딱지의 어느 지점을 노릴지. 조준각(대각 방향)·파워와 함께 3요소 조작을 이룬다.
+ *
+ * [aimBiasDeg] 는 조준각에 더해지는 편향(도)이고, 나머지는 토크·회전·튕김·밀림 배율이다.
+ */
+enum class StrikeTarget(
+    val label: String,
+    val hint: String,
+    val aimBiasDeg: Float,
+    val torqueMul: Float,
+    val spinMul: Float,
+    val bounceMul: Float,
+    val pushMul: Float,
+) {
+    /** 끌어온 방향 그대로. 예전과 같은 손맛. */
+    AUTO("자동", "끌어온 방향 그대로 친다", 0f, 1f, 1f, 1f, 1f),
+
+    /** 정통으로 밀어낸다 — 잘 튀고 잘 밀리지만 뒤집기는 어렵다. */
+    CENTER("중앙", "정통으로 밀어낸다 — 잘 튀고 잘 밀리지만 잘 안 뒤집힌다", 0f, 0.86f, 0.40f, 1.30f, 1.22f),
+
+    /** 모서리를 스친다 — 회전이 크게 붙어 옆으로 휘며 돈다. */
+    CORNER("모서리", "모서리를 비스듬히 스친다 — 회전이 붙어 옆으로 휜다", 15f, 1.02f, 1.40f, 0.95f, 0.92f),
+
+    /** 대각선을 파고든다 — 토크가 가장 세다. */
+    DIAGONAL("대각", "대각선으로 파고든다 — 토크가 가장 세다", 9f, 1.30f, 0.95f, 0.85f, 0.90f),
+
+    /** 들뜬 날개 틈을 직접 노린다 — 조준이 틈 쪽으로 살짝 보정된다. */
+    WEAK_GAP("들뜬 틈", "들뜬 날개 틈을 직접 노린다 — 조준이 틈 쪽으로 보정된다", 0f, 1f, 0.75f, 1.05f, 0.90f),
+}
+
+/**
  * 네모 딱지치기 2.5D 물리.
  *
  * - 딱지의 진행 거리는 감속에서 닫힌 식으로 구한다(speed² / 2·decel).
  * - 상대 딱지와의 접촉점을 계산해 어느 변을 때렸는지, 들뜬 날개 틈을 맞혔는지 판정한다.
  * - 때리는 위치(딱지 중심에서 얼마나 벗어났는지)가 토크를 만들고, 뒤집힘 비율이 1을 넘으면 뒤집힌다.
+ * - 결과에는 프레임 단위 2.5D 연출([com.game.gametong.game.SquareTtakjiFlight])이 쓸
+ *   들림 각·회전·튕김 정보가 함께 담긴다.
  */
 data class SquareStrikeResult(
     val contact: Boolean,
@@ -82,8 +114,35 @@ data class SquareStrikeResult(
     val contactOffset: Float,
     val hitEdge: Int,
     val defenderEdge: Int,
+    // ── 2.5D 연출·조작용 ─────────────────────────────────────────
+    /** 노린 지점 */
+    val target: StrikeTarget = StrikeTarget.AUTO,
+    /** 실제로 적용된 입사 방향(도, 0 = 상대 정면) */
+    val approachDeg: Float = 0f,
+    /** 내 딱지의 어느 날을 때렸는지(-1~1) */
+    val strikePoint: Float = 0f,
+    /** 상대 변에서 얼마나 벗어난 지점을 맞혔는지로 늘어난 지렛대 배율 */
+    val lever: Float = 1f,
+    /** 맞은 딱지가 들리는 최고 각(도). 뒤집히면 180. */
+    val tiltPeak: Float = 0f,
+    /** 뒤집히는 데 걸리는 시간(초) */
+    val flipDuration: Float = 0f,
+    /** 맞은 딱지에 붙는 회전(도/초) */
+    val defenderSpin: Float = 0f,
+    /** 튀어 오르는 높이(무대 단위) */
+    val bounceHeight: Float = 0f,
+    /** 밀려나는 속도(단위/초) */
+    val pushSpeed: Float = 0f,
 ) {
     val scored: Boolean get() = flipped
+
+    /** 넘어갈 듯 말 듯 아슬아슬하게 들렸다가 도로 떨어진 수. */
+    val nearFlip: Boolean get() = !flipped && contact && tiltPeak >= NEAR_FLIP_MIN
+
+    companion object {
+        /** 이 각 이상 들렸으면 "아슬아슬" 연출로 본다. */
+        const val NEAR_FLIP_MIN = 65f
+    }
 }
 
 object SquareTtakjiEngine {
@@ -108,6 +167,13 @@ object SquareTtakjiEngine {
     /** 들뜬 날개 틈을 정확히 맞혔을 때 토크 배율. */
     const val WEAK_POINT_MUL = 1.85f
 
+    /** 들뜬 틈을 노릴 때 조준이 틈 쪽으로 휘는 최대 각(도). */
+    const val GAP_ASSIST_MAX = 22f
+
+    /** 맞은 지점이 변 끝일 때의 지렛대 배율(중심 0.85 ~ 끝 1.15). */
+    const val LEVER_BASE = 0.85f
+    const val LEVER_RANGE = 0.30f
+
     /** 날개 틈의 유효 폭(변의 절반을 1로 봤을 때). */
     const val WEAK_POINT_WINDOW = 0.45f
 
@@ -117,6 +183,9 @@ object SquareTtakjiEngine {
     /** 때리는 자리가 이만큼 벗어나면 토크가 최대가 된다. */
     const val EDGE_TORQUE_FLOOR = 0.55f
     const val EDGE_TORQUE_RANGE = 0.45f
+
+    /** 맞은 딱지가 받는 밀림 속도 비율(공격 속도 대비). */
+    const val PUSH_UNIT = 0.34f
 
     /** 피로도 100에서 1.0, 0에서 0.70까지 파워 상한이 준다. */
     private const val STAMINA_CAP_MIN = 0.70f
@@ -195,9 +264,12 @@ object SquareTtakjiEngine {
         power: Float,
         strikePoint: Float,
         forwardSign: Float = -1f,
+        target: StrikeTarget = StrikeTarget.AUTO,
     ): SquareStrikeResult {
-        val dir = aimDirection(aimDeg, forwardSign)
-        val speed = MAX_ATTACK_SPEED * power.coerceIn(0f, 1f) * attacker.material.speedMul
+        val applied = power.coerceIn(0f, 1f)
+        val aim = aimDeg + targetBias(attackerPos, defenderPos, defender, forwardSign, aimDeg, target)
+        val dir = aimDirection(aim, forwardSign)
+        val speed = MAX_ATTACK_SPEED * applied * attacker.material.speedMul
         val slide = slideDistance(speed, surface, attacker)
 
         val toDef = defenderPos - attackerPos
@@ -205,10 +277,11 @@ object SquareTtakjiEngine {
         val lateralVec = toDef - dir * forward
         val lateral = lateralVec.length()
         val reach = (attacker.halfSize + defender.halfSize) * CONTACT_SLACK
-        val contact = forward >= 0f && forward <= slide + attacker.halfSize && lateral <= reach
+        // 살포시는 상대 모서리에 닿을 거리까지 가야 한다(중심 거리에서 두 반폭을 뺀 만큼).
+        val contact = forward >= 0f && lateral <= reach && forward - reach <= slide
 
         if (!contact) {
-            val floorHit = power >= FLOOR_HIT_POWER
+            val floorHit = applied >= FLOOR_HIT_POWER
             val overshoot = slide - forward
             return SquareStrikeResult(
                 contact = false,
@@ -218,14 +291,18 @@ object SquareTtakjiEngine {
                 flipRatio = 0f,
                 slideDistance = slide,
                 overshoot = overshoot,
-                appliedPower = power.coerceIn(0f, 1f),
+                appliedPower = applied,
                 contactOffset = 0f,
                 hitEdge = -1,
                 defenderEdge = defender.weakEdge,
+                target = target,
+                approachDeg = aim,
+                strikePoint = strikePoint,
+                pushSpeed = applied * MAX_ATTACK_SPEED * PUSH_UNIT * target.pushMul,
             )
         }
 
-        val contactPoint = attackerPos + dir * forward.coerceIn(0f, slide)
+        val contactPoint = attackerPos + dir * (forward - reach).coerceIn(0f, slide)
         val local = rotate(contactPoint - defenderPos, -defenderAngleDeg)
         // 때려 들어온 방향의 반대쪽 변이 맞은 변이다(아래에서 올라오면 상대의 아래 변).
         val approach = rotate(-dir, -defenderAngleDeg)
@@ -239,24 +316,87 @@ object SquareTtakjiEngine {
         val weak = hitEdge == defender.weakEdge && abs(contactOffset) <= WEAK_POINT_WINDOW
 
         val pointFactor = EDGE_TORQUE_FLOOR + EDGE_TORQUE_RANGE * abs(strikePoint.coerceIn(-1f, 1f))
-        var torque = power.coerceIn(0f, 1f) * TORQUE_UNIT * pointFactor * attacker.material.attackMul
+        // 변 끝을 맞히면 지렛대가 길어져 토크가 커진다(중심을 맞히면 덜 들린다).
+        val lever = LEVER_BASE + LEVER_RANGE * abs(contactOffset)
+        var torque = applied * TORQUE_UNIT * pointFactor * lever * attacker.material.attackMul * target.torqueMul
         if (weak) torque *= WEAK_POINT_MUL
         val ratio = torque / defender.flipResistance
+        val flipped = ratio >= 1f
 
         return SquareStrikeResult(
             contact = true,
             floorHit = false,
             weakPoint = weak,
-            flipped = ratio >= 1f,
+            flipped = flipped,
             flipRatio = ratio,
             slideDistance = slide,
             overshoot = slide - forward,
-            appliedPower = power.coerceIn(0f, 1f),
+            appliedPower = applied,
             contactOffset = contactOffset,
             hitEdge = hitEdge,
             defenderEdge = defender.weakEdge,
+            target = target,
+            approachDeg = aim,
+            strikePoint = strikePoint.coerceIn(-1f, 1f),
+            lever = lever,
+            tiltPeak = tiltPeakFor(ratio),
+            flipDuration = flipDurationFor(ratio),
+            defenderSpin = defenderSpinFor(applied, strikePoint, contactOffset, target, aim),
+            bounceHeight = bounceHeightFor(applied, surface, defender, target),
+            pushSpeed = pushSpeedFor(applied, contactOffset, target),
         )
     }
+
+    /**
+     * 노린 지점에 따라 조준각에 더할 편향.
+     * 들뜬 틈은 실제 틈 방향으로 조금 휘게 해 준다(최대 [GAP_ASSIST_MAX]도).
+     */
+    fun targetBias(
+        attackerPos: Vec2,
+        defenderPos: Vec2,
+        defender: TtakjiSpec,
+        forwardSign: Float,
+        aimDeg: Float,
+        target: StrikeTarget,
+    ): Float = when (target) {
+        StrikeTarget.WEAK_GAP -> (weakSpotAim(attackerPos, defenderPos, defender, forwardSign) - aimDeg)
+            .coerceIn(-GAP_ASSIST_MAX, GAP_ASSIST_MAX)
+        // 같은 "오른쪽"이 두 사람 모두에게 자기 기준 오른쪽이 되도록 좌우를 맞춘다.
+        else -> target.aimBiasDeg * (if (forwardSign < 0f) 1f else -1f)
+    }
+
+    /** 뒤집히기 전이면 들리는 최고 각, 뒤집히면 180도. */
+    fun tiltPeakFor(ratio: Float): Float =
+        if (ratio >= 1f) 180f else (18f + 67f * ratio.coerceIn(0f, 1f)).coerceAtMost(85f)
+
+    fun flipDurationFor(ratio: Float): Float =
+        if (ratio < 1f) 0f else (0.42f - 0.10f * ((ratio - 1f) / 2f).coerceIn(0f, 1f))
+
+    /** 중심에서 벗어난 타격·모서리 타격일수록 회전이 크게 붙는다. */
+    fun defenderSpinFor(
+        power: Float,
+        strikePoint: Float,
+        contactOffset: Float,
+        target: StrikeTarget,
+        aimDeg: Float,
+    ): Float {
+        val off = (strikePoint.coerceIn(-1f, 1f) * 170f + contactOffset * 300f)
+        val diagonal = 1f + 0.35f * (abs(aimDeg) / 30f).coerceIn(0f, 1f)
+        return power * off * target.spinMul * diagonal
+    }
+
+    fun bounceHeightFor(
+        power: Float,
+        surface: TtakjiSurface,
+        defender: TtakjiSpec,
+        target: StrikeTarget,
+    ): Float {
+        val lightness = 1.35f - 0.12f * (defender.flipResistance - TtakjiMaterial.NEWSPAPER.flipResistance) / 12f
+        return power * 60f * (0.35f + surface.bounce) * target.bounceMul * lightness.coerceIn(0.7f, 1.4f)
+    }
+
+    fun pushSpeedFor(power: Float, contactOffset: Float, target: StrikeTarget): Float =
+        power * MAX_ATTACK_SPEED * PUSH_UNIT * target.pushMul * (0.78f + 0.22f * abs(contactOffset))
 
     /**
      * AI가 고르는 한 수: 뒤집을 수 있는 수 중 가장 약한(피로가 적은) 것을 고른다.
@@ -283,29 +423,41 @@ object SquareTtakjiEngine {
                 val power = p / 10f
                 if (power > maxPower + 1e-4f) continue
                 for (edge in listOf(-0.95f, -0.5f, 0f, 0.5f, 0.95f)) {
-                    val result = strike(
-                        attackerPos, attacker, defenderPos, defender, defenderAngleDeg,
-                        surface, sweep, power, edge, forwardSign,
-                    )
-                    val candidate = SquareStrike(sweep, power, edge)
-                    if (result.flipped) {
-                        val current = bestFlip
-                        if (current == null || candidate.power < current.power - 1e-4f) bestFlip = candidate
-                    } else if (result.contact && result.flipRatio > bestContactRatio) {
-                        bestContactRatio = result.flipRatio
-                        bestContact = candidate
+                    // 사람이 고를 수 있는 노림 지점도 AI가 함께 저울질한다.
+                    for (target in AI_TARGETS) {
+                        val result = strike(
+                            attackerPos, attacker, defenderPos, defender, defenderAngleDeg,
+                            surface, sweep, power, edge, forwardSign, target,
+                        )
+                        val candidate = SquareStrike(sweep, power, edge, target)
+                        if (result.flipped) {
+                            val current = bestFlip
+                            if (current == null || candidate.power < current.power - 1e-4f) bestFlip = candidate
+                        } else if (result.contact && result.flipRatio > bestContactRatio) {
+                            bestContactRatio = result.flipRatio
+                            bestContact = candidate
+                        }
                     }
                 }
             }
-            sweep += 2.5f
+            sweep += 3f
         }
         val ideal = bestFlip ?: bestContact ?: SquareStrike(0f, 0.6f, 0f)
         val miss = (1f - skill.coerceIn(0f, 1f))
         val aim = ideal.aimDeg + (random.nextFloat() * 2f - 1f) * 9f * miss
         val power = (ideal.power + (random.nextFloat() * 2f - 1f) * 0.18f * miss)
             .coerceIn(0.2f, 1f)
-        return SquareStrike(aim, power, ideal.strikePoint)
+        return SquareStrike(aim, power, ideal.strikePoint, ideal.target)
     }
+
+    /** AI가 저울질하는 노림 지점. */
+    val AI_TARGETS = listOf(
+        StrikeTarget.AUTO,
+        StrikeTarget.CENTER,
+        StrikeTarget.DIAGONAL,
+        StrikeTarget.WEAK_GAP,
+        StrikeTarget.CORNER,
+    )
 
     /**
      * bestStrike 가 돌려준 조준을 그대로 계산해 보는 편의 함수(AI 흔들림까지 반영된 최종 결과).
@@ -321,7 +473,7 @@ object SquareTtakjiEngine {
         forwardSign: Float,
     ): SquareStrikeResult = strike(
         attackerPos, attacker, defenderPos, defender, defenderAngleDeg,
-        surface, strike.aimDeg, strike.power, strike.strikePoint, forwardSign,
+        surface, strike.aimDeg, strike.power, strike.strikePoint, forwardSign, strike.target,
     )
 
     /** from 에서 to 를 보는 조준각(0 = 상대 정면). */
@@ -357,4 +509,5 @@ data class SquareStrike(
     val aimDeg: Float,
     val power: Float,
     val strikePoint: Float,
+    val target: StrikeTarget = StrikeTarget.AUTO,
 )

@@ -9,10 +9,14 @@ enum class RoundOutcome { NONE, PLAYER, AI }
  *
  * 번갈아 한 번씩 튕겨 상대 지우개를 책상 밖으로 떨어뜨린다. 내 지우개가 떨어지면
  * 그 라운드는 상대 승리. 3판 2선승.
+ *
+ * 책상 표면([surface])의 상태에 따라 마찰이 달라 미끄러지는 거리·회전·튕김이 바뀌고,
+ * 내 지우개의 어느 지점을 때리는지([flick] 의 strikeOffset)에 따라 회전이 붙어 궤적이 휜다.
  */
 class AlkkaegiMatch(
     val playerType: EraserType = EraserType.STANDARD,
     val aiType: EraserType = EraserType.STANDARD,
+    var surface: DeskSurface = DeskSurface.WOOD,
     seed: Long = 20261121L,
 ) : DuelMatch {
     val random = Random(seed)
@@ -34,6 +38,10 @@ class AlkkaegiMatch(
     var turnsInRound: Int = 0
         private set
 
+    /** 마지막 수에서 지우개가 실제로 미끄러진 거리(표면 마찰 체감용). */
+    var lastSlide: Float = 0f
+        private set
+
     override val world: EraserWorld = newWorld()
     override val isFinished: Boolean get() = phase == MatchPhase.FINISHED
     private var aiThrough = 0
@@ -41,15 +49,17 @@ class AlkkaegiMatch(
     fun newWorld(): EraserWorld = EraserWorld(
         player = EraserBody(Side.PLAYER, playerType, PLAYER_HOME, PLAYER_HOME),
         opponent = EraserBody(Side.AI, aiType, AI_HOME, AI_HOME),
+        surface = surface,
     )
 
     val isPlayerTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.PLAYER
     val isAiTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.AI
 
-    override fun flick(velocity: Vec2) {
+    override fun flick(velocity: Vec2, strikeOffset: Float) {
         if (phase != MatchPhase.AIMING) return
         if (velocity.length() < 40f) return
-        world.flick(turn, velocity)
+        lastSlide = 0f
+        world.flick(turn, velocity, strikeOffset)
         phase = MatchPhase.MOVING
     }
 
@@ -58,6 +68,7 @@ class AlkkaegiMatch(
         val attacker = world.bodyOf(turn)
         val defender = world.bodyOf(turn.other())
         turnsInRound++
+        lastSlide = attacker.home.distanceTo(attacker.pos)
 
         if (attacker.fallen || defender.fallen) {
             // 내가 떨어졌으면 상대 승리(같이 떨어져도 마찬가지) — 남는 쪽이 라운드를 가져간다.
@@ -85,16 +96,19 @@ class AlkkaegiMatch(
         }
         round++
         turnsInRound = 0
+        lastSlide = 0f
         world.player.resetHome()
         world.opponent.resetHome()
+        world.immovableSide = null
+        world.surface = surface
         turn = roundWinner.other()
         phase = MatchPhase.AIMING
     }
 
-    override fun aiVelocity(accuracy: Float): Vec2 {
+    override fun aiVelocity(accuracy: Float, strikeOffset: Float): Vec2 {
         aiThrough++
         val noisyRandom = Random(random.nextLong() xor (aiThrough * 6151L))
-        return EraserAi.choose(world, turn, AiMode.ALKKAEGI, accuracy, noisyRandom)
+        return EraserAi.choose(world, turn, AiMode.ALKKAEGI, accuracy, noisyRandom, strikeOffset)
     }
 
     private fun finishRound(roundWinner: Side): RoundOutcome {

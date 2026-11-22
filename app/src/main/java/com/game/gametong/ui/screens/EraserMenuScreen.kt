@@ -32,22 +32,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.game.gametong.game.DeskSurface
 import com.game.gametong.game.EraserType
 import com.game.gametong.ui.EraserMode
 import com.game.gametong.ui.components.FunButton
 import com.game.gametong.ui.components.PaperCard
 import com.game.gametong.ui.components.ScreenHeader
+import com.game.gametong.ui.components.SelectChip
 import com.game.gametong.ui.theme.Inks
 
 @Composable
 fun EraserMenuScreen(
     onBack: () -> Unit,
-    onStart: (EraserMode, EraserType, EraserType, Boolean) -> Unit,
+    onStart: (EraserMode, EraserType, EraserType, Boolean, DeskSurface) -> Unit,
 ) {
     var mode by remember { mutableStateOf(EraserMode.WRESTLING) }
     var playerType by remember { mutableStateOf(EraserType.STANDARD) }
     var aiType by remember { mutableStateOf(EraserType.JUMBO) }
     var twoPlayer by remember { mutableStateOf(false) }
+    var surface by remember { mutableStateOf(DeskSurface.WOOD) }
 
     Box(
         modifier = Modifier
@@ -142,6 +145,48 @@ fun EraserMenuScreen(
                     }
                 }
 
+                PaperCard(modifier = Modifier.fillMaxWidth(), padding = 12.dp) {
+                    Column {
+                        Text(
+                            "책상 표면",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Inks.Wood,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "표면 마찰에 따라 미끄러지는 거리와 회전이 달라집니다.",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Inks.SoftInk,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        for (row in DeskSurface.entries.chunked(2)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                for (type in row) {
+                                    SelectChip(
+                                        label = type.label,
+                                        selected = type == surface,
+                                        color = surfaceAccent(type),
+                                        modifier = Modifier.weight(1f),
+                                    ) { surface = type }
+                                }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        Text(
+                            surface.hint,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Inks.Ink,
+                        )
+                    }
+                }
+
                 PaperCard(
                     modifier = Modifier.fillMaxWidth(),
                     padding = 12.dp,
@@ -149,8 +194,10 @@ fun EraserMenuScreen(
                 ) {
                     Text(
                         text = if (mode == EraserMode.WRESTLING) {
-                            "규칙 — 번갈아 한 번씩 튕깁니다. 상대 지우개 위로 올라타 멈추면 1카운트. " +
-                                "너무 약하면 옆으로 흐르고, 너무 세면 넘어가 버립니다. 3카운트를 먼저 채우면 승리."
+                            "규칙 — 번갈아 한 번씩 튕깁니다. 상대 지우개 위로 걸쳐 올라 멈추면 1카운트. " +
+                                "완전히 덮지 않아도 되지만 비스듬히 걸치면 상대가 빠져나옵니다. " +
+                                "너무 약하면 옆으로 흐르고, 너무 세면 넘어가 버립니다. " +
+                                "카운트가 나도 처음 자리로 돌아가지 않고 그 자리에서 계속 이어집니다. 3카운트 승리."
                         } else {
                             "규칙 — 번갈아 한 번씩 튕겨 상대 지우개를 책상 밖으로 떨어뜨립니다. " +
                                 "내 지우개가 먼저 떨어지면 그 라운드는 상대 승리. 3판 2선승."
@@ -166,9 +213,9 @@ fun EraserMenuScreen(
                     modifier = Modifier.fillMaxWidth(),
                     color = Inks.Green,
                     fontSize = 21,
-                ) { onStart(mode, playerType, aiType, twoPlayer) }
+                ) { onStart(mode, playerType, aiType, twoPlayer, surface) }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(26.dp))
             }
         }
     }
@@ -258,4 +305,12 @@ fun eraserEmoji(type: EraserType): String = when (type) {
     EraserType.JUMBO -> "🟦"
     EraserType.STANDARD -> "🧽"
     EraserType.NIMBLE -> "🟩"
+}
+
+/** 표면별 강조색(책상 느낌). */
+fun surfaceAccent(type: DeskSurface): Color = when (type) {
+    DeskSurface.COATED -> Inks.Blue
+    DeskSurface.WOOD -> Inks.WoodLight
+    DeskSurface.PLYWOOD -> Inks.Orange
+    DeskSurface.DUSTY -> Inks.Purple
 }

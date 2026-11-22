@@ -40,20 +40,22 @@ object EraserAi {
         return out
     }
 
-    fun rank(world: EraserWorld, attacker: Side, mode: AiMode): List<Candidate> {
+    fun rank(world: EraserWorld, attacker: Side, mode: AiMode, strikeOffset: Float = 0f): List<Candidate> {
         val att = world.bodyOf(attacker)
         return candidates(world, attacker).map { velocity ->
             val sim = world.copy()
             sim.immovableSide = if (mode == AiMode.WRESTLING) attacker.other() else null
-            sim.flick(attacker, velocity)
+            sim.flick(attacker, velocity, strikeOffset)
             sim.settle()
             val simAtt = sim.bodyOf(attacker)
             val simDef = sim.bodyOf(attacker.other())
             val score = when {
                 simAtt.fallen -> -1000f
                 mode == AiMode.WRESTLING -> {
+                    // 걸쳐 앉아야 카운트 — 겹침만으로는 부족하고 기운 각도 본다.
+                    val quality = sim.pinQualityFor(attacker)
                     val ratio = if (simDef.fallen) 0f else sim.overlapRatio(simAtt, simDef)
-                    ratio * 100f + if (ratio >= Board.PIN_OVERLAP) 40f else 0f
+                    quality * 120f + ratio * 30f + if (quality > 0f) 40f else 0f
                 }
                 simDef.fallen -> 1000f
                 else -> -edgeDistance(simDef.pos) - 0.15f * edgeDistance(simAtt.pos)
@@ -68,8 +70,9 @@ object EraserAi {
         mode: AiMode,
         accuracy: Float = 0.82f,
         random: Random = Random(0),
+        strikeOffset: Float = 0f,
     ): Vec2 {
-        val ranked = rank(world, attacker, mode)
+        val ranked = rank(world, attacker, mode, strikeOffset)
         if (ranked.isEmpty()) return Vec2.ZERO
         // 실력이 낮으면 상위 후보 중 무작위, 조준에도 흔들림을 준다.
         val pickWindow = ((1f - accuracy) * 8f).toInt().coerceIn(0, 6)
@@ -85,9 +88,9 @@ object EraserAi {
     }
 
     /** 조준 보조: 이 발사로 지우개가 어디에 멈출지 미리 계산한다. */
-    fun predictRest(world: EraserWorld, side: Side, velocity: Vec2): Vec2 {
+    fun predictRest(world: EraserWorld, side: Side, velocity: Vec2, strikeOffset: Float = 0f): Vec2 {
         val sim = world.copy()
-        sim.flick(side, velocity)
+        sim.flick(side, velocity, strikeOffset)
         sim.settle()
         val body = sim.bodyOf(side)
         return if (body.fallen) Vec2(-1f, -1f) else body.pos

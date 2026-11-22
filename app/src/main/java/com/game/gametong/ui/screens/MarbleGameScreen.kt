@@ -288,7 +288,7 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         fontSize = 18,
                     ) { gameKey++ }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(26.dp))
             }
         }
     }
@@ -538,7 +538,7 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         fontSize = 18,
                     ) { gameKey++ }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(26.dp))
             }
         }
     }

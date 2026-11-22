@@ -22,11 +22,20 @@ object Board {
     /** 레슬링: 올라탄 지우개가 이만큼 덮이면 1카운트. */
     const val PIN_OVERLAP = 0.30f
 
+    /** 이보다 비스듬히 걸치면(기운 각이 크면) 핀이 아니라 미끄러져 내려온다. */
+    const val PIN_MAX_LEAN = 40f
+
+    /** 이만큼 덮으면 완전히 눌러 앉은 것으로 본다(핀 난이도 계산 기준). */
+    const val PIN_FULL_OVERLAP = 0.62f
+
+    /** 회전이 궤적을 휘게 하는 정도(회전 각속도 1도/초마다 1초에 도는 각). */
+    const val SPIN_TURN = 0.22f
+
+    /** 회전 감쇠(1/초). 표면 [DeskSurface.spinDecayMul] 이 곱해진다. */
+    const val SPIN_DECAY = 1.25f
+
     /** 한 번의 움직임을 계산하는 최대 시간(초). */
     const val MAX_SIM_SECONDS = 6f
-
-    /** 턴이 끝난 뒤 두 지우개가 이보다 멀어지면 자리를 다시 잡는다. */
-    const val RESET_DISTANCE = 620f
 
     /** 알까기: 한 라운드에서 비기지 않게 두는 최대 턴 수. */
     const val MAX_TURNS_PER_ROUND = 16

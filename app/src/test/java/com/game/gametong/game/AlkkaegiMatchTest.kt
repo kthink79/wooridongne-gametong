@@ -101,6 +101,48 @@ class AlkkaegiMatchTest {
         assertEquals(1, m.playerRounds + m.aiRounds)
     }
 
+    // ── 책상 표면 · 타격 위치 ────────────────────────────────────────
+
+    @Test
+    fun `표면이 미끄러우면 같은 세기도 더 멀리 밀린다`() {
+        fun pushed(surface: DeskSurface): Float {
+            val m = AlkkaegiMatch(EraserType.STANDARD, EraserType.STANDARD, surface = surface, seed = 3L)
+            m.flick(Vec2(0f, -900f))
+            m.world.settle()
+            return m.world.opponent.pos.y
+        }
+        val coated = pushed(DeskSurface.COATED)
+        val wood = pushed(DeskSurface.WOOD)
+        val dusty = pushed(DeskSurface.DUSTY)
+        assertTrue("코팅 $coated < 나무 $wood", coated < wood)
+        assertTrue("나무 $wood < 먼지 $dusty", wood < dusty)
+    }
+
+    @Test
+    fun `표면에 따라 내 지우개가 미끄러진 거리가 달라진다`() {
+        val m = AlkkaegiMatch(EraserType.STANDARD, EraserType.STANDARD, surface = DeskSurface.DUSTY)
+        m.flick(Vec2(0f, -300f))
+        m.world.settle()
+        val slide = m.settleFlick()
+        assertEquals(RoundOutcome.NONE, slide)
+        assertTrue("먼지 책상에서는 짧게 멈춘다: ${m.lastSlide}", m.lastSlide in 1f..320f)
+    }
+
+    @Test
+    fun `중심을 벗어나 때리면 지우개가 돌며 휜다`() {
+        fun endX(offset: Float): Vec2 {
+            val m = AlkkaegiMatch(EraserType.STANDARD, EraserType.STANDARD, seed = 3L)
+            m.flick(Vec2(0f, -950f), offset)
+            m.world.settle()
+            return m.world.player.pos
+        }
+        val center = endX(0f)
+        val edge = endX(0.9f)
+        assertEquals("가운데 타격은 곧게", 500f, center.x, 3f)
+        assertTrue("끝 타격은 옆으로 휜다: ${edge.x}", edge.x > center.x + 4f)
+        assertTrue(kotlin.math.abs(edge.y - center.y) < 120f)
+    }
+
     @Test
     fun `움직이지 않을 때는 정산할 수 없다`() {
         val m = match()

@@ -1,7 +1,5 @@
 package com.game.gametong.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,25 +20,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,10 +42,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.game.gametong.game.Side
 import com.game.gametong.game.SquareStrikeResult
+import com.game.gametong.game.SquareTtakjiFlight
 import com.game.gametong.game.SquareTtakjiMatch
+import com.game.gametong.game.StrikeTarget
 import com.game.gametong.game.TtakjiMaterial
+import com.game.gametong.game.TtakjiPose
 import com.game.gametong.game.TtakjiSpec
 import com.game.gametong.game.TtakjiSurface
+import com.game.gametong.ui.components.BlockPose
 import com.game.gametong.ui.components.FunButton
 import com.game.gametong.ui.components.PaperCard
 import com.game.gametong.ui.components.ScreenHeader
@@ -59,16 +57,35 @@ import com.game.gametong.ui.components.ScorePill
 import com.game.gametong.ui.components.SelectChip
 import com.game.gametong.ui.components.StatBar
 import com.game.gametong.ui.components.TurnBanner
+import com.game.gametong.ui.components.drawBlock
+import com.game.gametong.ui.components.drawOnTopFace
 import com.game.gametong.ui.theme.Inks
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.min
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val FIELD_W = 1000f
 private const val FIELD_H = 1500f
 
-/** 네모 딱지치기 경기 화면. 끌어서 조준하고 놓으면 한 수가 나간다. */
+/** 한 수의 2.5D 연출 상태. */
+private data class FlightView(
+    val attacker: Side,
+    val flight: SquareTtakjiFlight,
+)
+
+/** 화면에 그릴 딱지 한 장. */
+private data class Drawn(
+    val side: Side,
+    val pose: TtakjiPose,
+    val spec: TtakjiSpec,
+    val flipped: Boolean,
+)
+
+/** 네모 딱지치기 경기 화면. 끌어서 조준하거나, 타격 위치·조준 지점·파워를 골라 친다. */
 @Composable
 fun SquareTtakjiScreen(
     surface: TtakjiSurface,
@@ -88,40 +105,86 @@ fun SquareTtakjiScreen(
             twoPlayer = twoPlayer,
         )
     }
+    val scope = rememberCoroutineScope()
+    // 빠른 연타로 한 수가 두 번 나가지 않게 하는 잠금
+    val gate = remember(matchKey) { java.util.concurrent.atomic.AtomicBoolean(false) }
     var tick by remember { mutableIntStateOf(0) }
     var strikePoint by remember { mutableStateOf(0.9f) }
+    var target by remember { mutableStateOf(StrikeTarget.AUTO) }
+    var aimDeg by remember { mutableStateOf(0f) }
+    var power by remember { mutableStateOf(0.8f) }
     var dragStart by remember { mutableStateOf<Offset?>(null) }
     var dragNow by remember { mutableStateOf<Offset?>(null) }
-    var power by remember { mutableStateOf(0f) }
-    var aimDeg by remember { mutableStateOf(0f) }
     var lastResult by remember { mutableStateOf<SquareStrikeResult?>(null) }
     var lastActor by remember { mutableStateOf<Side?>(null) }
-    var flippedSide by remember { mutableStateOf<Side?>(null) }
     var thinking by remember { mutableStateOf(false) }
+    var playing by remember { mutableStateOf(false) }
+    var view by remember { mutableStateOf<FlightView?>(null) }
 
-    val aiFlip by animateFloatAsState(
-        targetValue = if (flippedSide == Side.AI) 180f else 0f,
-        animationSpec = tween(420),
-        label = "aiFlip",
-    )
+    val playerTurn = match.turn == Side.PLAYER
+    val canStrike = !match.finished && !playing && !thinking && (playerTurn || twoPlayer)
 
-    LaunchedEffect(tick, matchKey) {
+    /** 한 수를 계산해 2.5D 연출을 끝까지 돌린다. */
+    suspend fun playFlight(result: SquareStrikeResult, actor: Side) {
+        playing = true
+        val f = SquareTtakjiFlight(
+            result = result,
+            attackerHome = match.homeOf(actor),
+            defenderHome = match.homeOf(actor.other()),
+            attackerSpec = match.specOf(actor),
+            defenderSpec = match.specOf(actor.other()),
+            surface = match.surface,
+            forwardSign = if (actor == Side.PLAYER) -1f else 1f,
+        )
+        view = FlightView(actor, f)
+        var last = withFrameNanos { it }
+        while (!f.isFinished) {
+            val now = withFrameNanos { it }
+            val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.05f)
+            last = now
+            f.advance(dt)
+            tick++
+        }
+        tick++
+        playing = false
+    }
+
+    /** 내(또는 2P) 한 수 → 연출 → (AI 대전이면) AI 한 수 → 연출. */
+    suspend fun runStrike(actor: Side, aim: Float, p: Float) {
+        val result = match.attack(actor, aim, p, strikePoint, target)
+        lastResult = result
+        lastActor = actor
+        tick++
+        playFlight(result, actor)
         if (!twoPlayer && !match.finished && match.turn == Side.AI) {
             thinking = true
-            delay(620)
-            val result = match.aiAttack()
-            lastResult = result
-            lastActor = Side.AI
-            flippedSide = if (result.flipped) Side.PLAYER else null
+            delay(560)
+            val aiResult = match.aiAttack()
             thinking = false
+            lastResult = aiResult
+            lastActor = Side.AI
             tick++
+            playFlight(aiResult, Side.AI)
+        }
+        tick++
+    }
+
+    fun fire(actor: Side, aim: Float, p: Float) {
+        if (!canStrike) return
+        if (!gate.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                runStrike(actor, aim, p)
+            } finally {
+                gate.set(false)
+            }
         }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Inks.Kraft, Inks.KraftDeep, Inks.Kraft)))
+            .background(Brush.verticalGradient(listOf(Inks.Kraft, Inks.KraftDeep, Inks.Kraft))),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             ScreenHeader(title = "네모 딱지치기", onBack = onExit)
@@ -132,7 +195,6 @@ fun SquareTtakjiScreen(
                     .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val playerTurn = match.turn == Side.PLAYER
                 TurnBanner(
                     text = when {
                         match.finished -> when (match.winner) {
@@ -140,6 +202,7 @@ fun SquareTtakjiScreen(
                             Side.AI -> if (twoPlayer) "2P 승리!" else "AI에게 졌다…"
                             else -> "무승부"
                         }
+                        playing -> "딱지가 날아간다…"
                         twoPlayer -> if (playerTurn) "1P 차례 — 끌어서 조준" else "2P 차례 — 끌어서 조준"
                         playerTurn -> "내 차례 — 끌어서 조준"
                         else -> if (thinking) "AI가 각도를 재는 중…" else "AI 차례"
@@ -165,114 +228,81 @@ fun SquareTtakjiScreen(
                         .clip(RoundedCornerShape(18.dp))
                         .background(surfaceColor(surface))
                         .border(3.dp, Inks.Wood, RoundedCornerShape(18.dp))
-                        .pointerInput(match, match.turn, match.finished) {
+                        .pointerInput(match, match.turn, match.finished, playing, thinking) {
                             detectDragGestures(
                                 onDragStart = { offset ->
-                                    if (!match.finished) {
+                                    if (canStrike) {
                                         dragStart = offset
                                         dragNow = offset
-                                        power = 0f
-                                        aimDeg = 0f
                                     }
                                 },
                                 onDrag = { change, _ ->
                                     val start = dragStart
-                                    if (start != null && !match.finished) {
+                                    if (start != null && canStrike) {
                                         dragNow = change.position
                                         change.consume()
                                         val dx = start.x - change.position.x
                                         val dy = start.y - change.position.y
                                         val len = sqrt(dx * dx + dy * dy)
-                                        power = (len / (size.width * 0.42f)).coerceIn(0f, 1f)
-                                        if (len > 6f) {
-                                            aimDeg = aimOf(dx / len, dy / len, match.turn)
-                                        }
+                                        power = (len / (size.width * 0.42f)).coerceIn(0.08f, 1f)
+                                        if (len > 6f) aimDeg = aimOf(dx / len, dy / len, match.turn)
                                     }
                                 },
                                 onDragEnd = {
                                     val start = dragStart
                                     val now = dragNow
-                                    if (start != null && now != null && !match.finished) {
+                                    dragStart = null
+                                    dragNow = null
+                                    if (start != null && now != null) {
                                         val dx = start.x - now.x
                                         val dy = start.y - now.y
                                         val len = sqrt(dx * dx + dy * dy)
                                         if (len > 22f) {
                                             val actor = match.turn
-                                            val aim = aimOf(dx / len, dy / len, actor)
-                                            val p = power.coerceIn(0.05f, 1f)
-                                            val result = match.attack(actor, aim, p, strikePoint)
-                                            lastResult = result
-                                            lastActor = actor
-                                            flippedSide = if (result.flipped) actor.other() else null
-                                            tick++
+                                            fire(actor, aimOf(dx / len, dy / len, actor), power.coerceIn(0.12f, 1f))
                                         }
                                     }
-                                    dragStart = null
-                                    dragNow = null
-                                    power = 0f
                                 },
                                 onDragCancel = {
                                     dragStart = null
                                     dragNow = null
-                                    power = 0f
                                 },
                             )
                         },
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
+                        tick
                         val sx = size.width / FIELD_W
                         val sy = size.height / FIELD_H
                         drawSurface(surface, sx, sy)
-                        drawLine(
-                            color = Inks.Wood.copy(alpha = 0.35f),
-                            start = Offset(0f, SquareTtakjiMatch.AI_HOME_Y * sy),
-                            end = Offset(size.width, SquareTtakjiMatch.AI_HOME_Y * sy),
-                            strokeWidth = 2f,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 12f)),
+                        drawAimGuide(match, sx, sy, dragStart, dragNow)
+
+                        val flightView = view
+                        val playerPose = flightView?.let {
+                            if (it.attacker == Side.PLAYER) it.flight.attackerPose else it.flight.defenderPose
+                        } ?: TtakjiPose(match.playerHome)
+                        val aiPose = flightView?.let {
+                            if (it.attacker == Side.AI) it.flight.attackerPose else it.flight.defenderPose
+                        } ?: TtakjiPose(match.aiHome)
+                        val flippedSide = flightView?.let {
+                            if (it.flight.result.flipped) it.attacker.other() else null
+                        }
+
+                        val drawn = listOf(
+                            Drawn(Side.PLAYER, playerPose, match.playerSpec, flippedSide == Side.PLAYER),
+                            Drawn(Side.AI, aiPose, match.aiSpec, flippedSide == Side.AI),
                         )
-                        drawTtakji(
-                            cx = match.aiHome.x * sx,
-                            cy = match.aiHome.y * sy,
-                            spec = match.aiSpec,
-                            flipped = flippedSide == Side.AI,
-                            flipAngle = if (flippedSide == Side.AI) aiFlip else 0f,
-                            isMine = false,
-                            scale = sx,
-                        )
-                        drawTtakji(
-                            cx = match.playerHome.x * sx,
-                            cy = match.playerHome.y * sy,
-                            spec = match.playerSpec,
-                            flipped = flippedSide == Side.PLAYER,
-                            flipAngle = 0f,
-                            isMine = true,
-                            scale = sx,
-                        )
-                        val start = dragStart
-                        val now = dragNow
-                        if (start != null && now != null) {
-                            val dx = start.x - now.x
-                            val dy = start.y - now.y
-                            val len = sqrt(dx * dx + dy * dy)
-                            if (len > 12f) {
-                                val from = if (match.turn == Side.PLAYER) {
-                                    Offset(match.playerHome.x * sx, match.playerHome.y * sy)
-                                } else {
-                                    Offset(match.aiHome.x * sx, match.aiHome.y * sy)
-                                }
-                                val ux = dx / len
-                                val uy = dy / len
-                                val reach = min(len * 2.2f, size.width * 0.92f)
-                                val to = Offset(from.x + ux * reach, from.y + uy * reach)
-                                drawLine(
-                                    color = Inks.Red,
-                                    start = from,
-                                    end = to,
-                                    strokeWidth = 7f,
-                                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 12f)),
-                                )
-                                drawCircle(Inks.Red, radius = 10f, center = to)
-                            }
+                        // 공격 딱지를 나중에 그려 위로 올라오게 한다
+                        val ordered = if (flightView == null) drawn else drawn.sortedBy { it.side == flightView.attacker }
+                        for (d in ordered) {
+                            drawTtakji(
+                                pose = d.pose,
+                                spec = d.spec,
+                                isMine = d.side == Side.PLAYER,
+                                flipped = d.flipped,
+                                sx = sx,
+                                sy = sy,
+                            )
                         }
                     }
 
@@ -282,12 +312,13 @@ fun SquareTtakjiScreen(
                             .padding(8.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(Inks.Wood.copy(alpha = 0.78f))
-                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
                     ) {
                         Text(
                             text = when {
                                 dragStart != null -> "힘 ${(power * 100).toInt()}% · 각도 ${aimDeg.toInt()}°"
                                 match.finished -> "한 판 더 눌러 다시 시작"
+                                playing -> "튀어 오르고, 넘어갈 듯 말 듯…"
                                 else -> "${surface.label} · 끌어서 놓기"
                             },
                             color = Inks.White,
@@ -373,10 +404,11 @@ fun SquareTtakjiScreen(
                     }
                 }
 
+                // ── 3요소 조작: 타격 위치 · 조준 지점(대각) · 파워 ──────────
                 PaperCard(modifier = Modifier.fillMaxWidth(), padding = 10.dp) {
                     Column {
                         Text(
-                            "내 딱지의 어느 날을 때릴까?",
+                            "① 타격 위치 — 내 딱지의 어느 날을 때릴까?",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Black,
                             color = Inks.Wood,
@@ -387,13 +419,80 @@ fun SquareTtakjiScreen(
                             SelectChip("가운데", strikePoint in -0.4f..0.4f, Inks.Red, Modifier.weight(1f)) { strikePoint = 0f }
                             SelectChip("오른쪽 날", strikePoint > 0.4f, Inks.Red, Modifier.weight(1f)) { strikePoint = 0.9f }
                         }
-                        Spacer(Modifier.height(5.dp))
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            "날을 때리면 토크가 커집니다. 상대 딱지의 노란 들뜬 틈을 향해 끌어 보세요.",
+                            "날을 때리면 토크가 커지고, 가운데를 때리면 곧게 밀립니다.",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = Inks.SoftInk,
                         )
+
+                        Spacer(Modifier.height(9.dp))
+                        Text(
+                            "② 조준 지점 — 상대의 어디를 노릴까?",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Inks.Wood,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            for (t in listOf(StrikeTarget.CENTER, StrikeTarget.CORNER, StrikeTarget.DIAGONAL, StrikeTarget.WEAK_GAP)) {
+                                SelectChip(
+                                    label = t.label,
+                                    selected = target == t,
+                                    color = Inks.Blue,
+                                    modifier = Modifier.weight(1f),
+                                ) { target = if (target == t) StrikeTarget.AUTO else t }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (target == StrikeTarget.AUTO) "끌어온 방향 그대로 친다 — 노림 지점 없음" else target.hint,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Inks.SoftInk,
+                        )
+
+                        Spacer(Modifier.height(9.dp))
+                        Text(
+                            "③ 대각 방향과 파워",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Inks.Wood,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SelectChip("↙ 왼대각", aimDeg < -8f, Inks.Purple, Modifier.weight(1f)) { aimDeg = -22f }
+                            SelectChip("정면", abs(aimDeg) <= 8f, Inks.Purple, Modifier.weight(1f)) { aimDeg = 0f }
+                            SelectChip("↘ 오른대각", aimDeg > 8f, Inks.Purple, Modifier.weight(1f)) { aimDeg = 22f }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            for (p in listOf(0.4f, 0.65f, 0.85f, 1f)) {
+                                SelectChip(
+                                    label = "${(p * 100).toInt()}%",
+                                    selected = abs(power - p) < 0.06f,
+                                    color = Inks.Orange,
+                                    modifier = Modifier.weight(1f),
+                                ) { power = p }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        FunButton(
+                            text = when {
+                                match.finished -> "경기 끝"
+                                !canStrike && !thinking -> "상대 차례…"
+                                thinking -> "AI가 겨냥 중…"
+                                playing -> "날아가는 중…"
+                                else -> "이대로 친다"
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = if (canStrike) Inks.Red else Inks.Gray,
+                            fontSize = 18,
+                            enabled = canStrike,
+                        ) {
+                            fire(match.turn, aimDeg, power)
+                        }
                     }
                 }
 
@@ -419,12 +518,12 @@ fun SquareTtakjiScreen(
                     ) {
                         matchKey++
                         lastResult = null
-                        flippedSide = null
                         lastActor = null
+                        view = null
                         tick++
                     }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(26.dp))
             }
         }
     }
@@ -464,7 +563,7 @@ private fun describe(
             else -> "경기 끝 — ${match.playerScore} : ${match.aiScore} 무승부."
         }
     }
-    val r = result ?: return "상대 딱지의 노란 날개 틈을 노려 끌어서 놓으세요."
+    val r = result ?: return "상대 딱지의 노란 날개 틈이나 모서리를 노려 끌어서 놓으세요."
     val who = when {
         twoPlayer && actor == Side.AI -> "2P가"
         twoPlayer -> "1P가"
@@ -476,8 +575,9 @@ private fun describe(
         !r.contact -> "$who 딱지가 상대에게 닿지 않았다. 더 세게, 또는 노면을 바꿔 보세요."
         r.flipped && r.weakPoint -> "$who 들뜬 날개 틈을 정확히 맞혔다! 뒤집혀서 한 장 따먹었다."
         r.flipped -> "$who 맞혔다 — 딱지가 뒤집혔다! 한 장 따먹었다."
-        r.weakPoint -> "$who 날개 틈을 맞혔지만 살짝 모자랐다. 조금 더 세게!"
-        else -> "$who 맞혔지만 뒤집히지 않았다 (뒤집힘 ${(r.flipRatio * 100).toInt()}%)."
+        r.nearFlip -> "$who 아슬아슬! ${r.tiltPeak.toInt()}도까지 들렸다가 도로 떨어졌다. 조금만 더!"
+        r.weakPoint -> "$who 날개 틈을 맞혔지만 모자랐다(뒤집힘 ${(r.flipRatio * 100).toInt()}%). 조금 더 세게!"
+        else -> "$who 맞혔지만 뒤집히지 않았다 (뒤집힘 ${(r.flipRatio * 100).toInt()}% · 들림 ${r.tiltPeak.toInt()}도)."
     }
 }
 
@@ -531,63 +631,93 @@ private fun DrawScope.drawSurface(surface: TtakjiSurface, sx: Float, sy: Float) 
     }
 }
 
-private fun DrawScope.drawTtakji(
-    cx: Float,
-    cy: Float,
-    spec: TtakjiSpec,
-    flipped: Boolean,
-    flipAngle: Float,
-    isMine: Boolean,
-    scale: Float,
+private fun DrawScope.drawAimGuide(
+    match: SquareTtakjiMatch,
+    sx: Float,
+    sy: Float,
+    start: Offset?,
+    now: Offset?,
 ) {
-    val half = spec.halfSize * scale
-    val c = Offset(cx, cy)
-    rotate(degrees = flipAngle, pivot = c) {
-        drawRoundRect(
-            color = Color(0x33000000),
-            topLeft = Offset(c.x - half + 5f, c.y - half + 9f),
-            size = Size(half * 2f, half * 2f),
-            cornerRadius = CornerRadius(10f),
-        )
-        drawRect(
-            color = if (isMine) Inks.Blue else Inks.Red,
-            topLeft = Offset(c.x - half, c.y - half),
-            size = Size(half * 2f, half * 2f),
-        )
-        val path = Path().apply {
-            moveTo(c.x - half, c.y - half)
-            lineTo(c.x + half, c.y + half)
-            lineTo(c.x - half, c.y + half)
-            close()
+    if (start == null || now == null) return
+    val dx = start.x - now.x
+    val dy = start.y - now.y
+    val len = sqrt(dx * dx + dy * dy)
+    if (len < 12f) return
+    val home = match.homeOf(match.turn)
+    val from = Offset(home.x * sx, home.y * sy)
+    val ux = dx / len
+    val uy = dy / len
+    val reach = min(len * 2.2f, size.width * 0.92f)
+    val to = Offset(from.x + ux * reach, from.y + uy * reach)
+    drawLine(
+        color = Inks.Red,
+        start = from,
+        end = to,
+        strokeWidth = 7f,
+        pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 12f)),
+    )
+    drawCircle(Inks.Red, radius = 10f, center = to)
+}
+
+/** 딱지 블록의 화면 자세. 경첩축으로 넘어가며 들리므로 아랫모서리가 바닥에 붙어 돈다. */
+private fun ttakjiBlockPose(
+    pose: TtakjiPose,
+    spec: TtakjiSpec,
+    sx: Float,
+    sy: Float,
+): BlockPose {
+    val scale = (sx + sy) / 2f
+    val width = spec.size * sx
+    val depth = spec.size * sy
+    val height = (4f + spec.thick * 4f) * scale
+    val tilt = pose.tilt
+    return BlockPose(
+        cx = pose.pos.x * sx,
+        cy = pose.pos.y * sy,
+        width = width,
+        depth = depth,
+        height = height,
+        yawDeg = pose.yaw,
+        tiltDeg = tilt,
+        tiltAxisDeg = Math.toDegrees(
+            atan2(pose.tiltAxis.y.toDouble(), pose.tiltAxis.x.toDouble())
+        ).toFloat(),
+        rollDeg = pose.roll,
+        lift = pose.z * scale,
+    )
+}
+
+private fun DrawScope.drawTtakji(
+    pose: TtakjiPose,
+    spec: TtakjiSpec,
+    isMine: Boolean,
+    flipped: Boolean,
+    sx: Float,
+    sy: Float,
+) {
+    val block = ttakjiBlockPose(pose, spec, sx, sy)
+    val face = if (isMine) Inks.Blue else Inks.Red
+    val back = if (isMine) Inks.Red else Inks.Blue
+    val top = if (flipped) back else face
+    val side = if (flipped) back.copy(alpha = 0.75f) else face.copy(alpha = 0.75f)
+    drawBlock(
+        pose = block,
+        topFaceColor = top,
+        sideColor = side,
+        borderColor = Inks.Wood,
+        borderWidth = 4f,
+    )
+    // 접힌 대각선
+    drawOnTopFace(block, -0.42f, -0.42f, 0.42f, 0.42f, Inks.White.copy(alpha = 0.35f), 3f)
+    if (!flipped) {
+        // 들뜬 날개 틈(변 가운데를 비스듬히)
+        val line = when (spec.weakEdge) {
+            0 -> listOf(-0.55f, -0.5f, 0.55f, -0.5f)
+            1 -> listOf(0.5f, -0.55f, 0.5f, 0.55f)
+            2 -> listOf(-0.55f, 0.5f, 0.55f, 0.5f)
+            else -> listOf(-0.5f, -0.55f, -0.5f, 0.55f)
         }
-        drawPath(path, if (isMine) Inks.Red else Inks.Blue)
-        drawRect(
-            color = Inks.Wood,
-            topLeft = Offset(c.x - half, c.y - half),
-            size = Size(half * 2f, half * 2f),
-            style = Stroke(width = 6f),
-        )
-        val gap = half * 0.6f
-        val a = when (spec.weakEdge) {
-            0 -> Offset(c.x - gap, c.y - half)
-            1 -> Offset(c.x + half, c.y - gap)
-            2 -> Offset(c.x - gap, c.y + half)
-            else -> Offset(c.x - half, c.y - gap)
-        }
-        val b = when (spec.weakEdge) {
-            0 -> Offset(c.x + gap, c.y - half)
-            1 -> Offset(c.x + half, c.y + gap)
-            2 -> Offset(c.x + gap, c.y + half)
-            else -> Offset(c.x - half, c.y + gap)
-        }
-        drawLine(color = Inks.Gold, start = a, end = b, strokeWidth = 13f)
-        drawLine(color = Color(0xFF8A5A00), start = a, end = b, strokeWidth = 4f)
-        if (flipped) {
-            drawRect(
-                color = Inks.White.copy(alpha = 0.35f),
-                topLeft = Offset(c.x - half, c.y - half),
-                size = Size(half * 2f, half * 2f),
-            )
-        }
+        drawOnTopFace(block, line[0], line[1], line[2], line[3], Inks.Gold, 7f)
+        drawOnTopFace(block, line[0], line[1], line[2], line[3], Color(0xFF8A5A00), 2.5f)
     }
 }

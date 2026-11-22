@@ -96,13 +96,19 @@ class SquareTtakjiMatch(
 
     /**
      * 한 수를 친다. [aimDeg] 0 = 상대 정면, [power] 0~1(피로·부상 상한이 적용된다),
-     * [strikePoint] -1~1(내 딱지의 어느 쪽을 때리는지).
+     * [strikePoint] -1~1(내 딱지의 어느 쪽을 때리는지), [target] 상대의 어느 지점을 노릴지.
      */
-    fun attack(side: Side, aimDeg: Float, power: Float, strikePoint: Float): SquareStrikeResult {
+    fun attack(
+        side: Side,
+        aimDeg: Float,
+        power: Float,
+        strikePoint: Float,
+        target: StrikeTarget = StrikeTarget.AUTO,
+    ): SquareStrikeResult {
         if (finished) {
             return SquareTtakjiEngine.strike(
                 homeOf(side), specOf(side), homeOf(side.other()), specOf(side.other()), 0f,
-                surface, aimDeg, 0f, strikePoint, if (side == Side.PLAYER) -1f else 1f,
+                surface, aimDeg, 0f, strikePoint, if (side == Side.PLAYER) -1f else 1f, target,
             )
         }
         val attackerSpec = specOf(side)
@@ -119,6 +125,7 @@ class SquareTtakjiMatch(
             power = applied,
             strikePoint = strikePoint,
             forwardSign = if (side == Side.PLAYER) -1f else 1f,
+            target = target,
         )
         lastResult = result
 
@@ -174,12 +181,16 @@ class SquareTtakjiMatch(
             random = random,
             skill = aiSkill,
         )
-        return attack(Side.AI, chosen.aimDeg, chosen.power, chosen.strikePoint)
+        return attack(Side.AI, chosen.aimDeg, chosen.power, chosen.strikePoint, chosen.target)
     }
 
     /** 2인 대전에서 "지금 차례인 쪽"이 치는 편의 함수. */
-    fun currentAttack(aimDeg: Float, power: Float, strikePoint: Float): SquareStrikeResult =
-        attack(turn, aimDeg, power, strikePoint)
+    fun currentAttack(
+        aimDeg: Float,
+        power: Float,
+        strikePoint: Float,
+        target: StrikeTarget = StrikeTarget.AUTO,
+    ): SquareStrikeResult = attack(turn, aimDeg, power, strikePoint, target)
 
     private fun finishIfNeeded(scorer: Side) {
         val scored = scoreOf(scorer)

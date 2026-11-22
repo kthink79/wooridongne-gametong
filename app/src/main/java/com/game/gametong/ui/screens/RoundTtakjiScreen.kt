@@ -879,7 +879,7 @@ private fun BlowGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         )
                     }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(26.dp))
             }
         }
     }

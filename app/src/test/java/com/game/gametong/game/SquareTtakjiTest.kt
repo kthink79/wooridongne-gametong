@@ -18,6 +18,7 @@ class SquareTtakjiTest {
         point: Float = 0f,
         defender: TtakjiSpec = paper,
         surface: TtakjiSurface = TtakjiSurface.DIRT,
+        target: StrikeTarget = StrikeTarget.AUTO,
     ) = SquareTtakjiEngine.strike(
         attackerPos = player,
         attacker = TtakjiSpec(TtakjiMaterial.COLOR_PAPER, 1, 0),
@@ -28,6 +29,7 @@ class SquareTtakjiTest {
         aimDeg = aim,
         power = power,
         strikePoint = point,
+        target = target,
     )
 
     @Test
@@ -252,6 +254,92 @@ class SquareTtakjiTest {
         val aim = SquareTtakjiEngine.weakSpotAim(player, ai, defender, -1f)
         // 오른쪽 변을 노리므로 정면(0도)보다 오른쪽으로 기운다.
         assertTrue(aim > 0f)
+    }
+
+
+    // ── 3요소 조작(타격 위치 · 조준 지점 · 파워) ─────────────────────────
+
+    @Test
+    fun `중앙을 노리면 덜 뒤집히고 더 높이 튄다`() {
+        val center = strike(power = 0.6f, point = 0.5f, target = StrikeTarget.CENTER, defender = paper.copy(weakEdge = 0))
+        val auto = strike(power = 0.6f, point = 0.5f, target = StrikeTarget.AUTO, defender = paper.copy(weakEdge = 0))
+        assertTrue(center.contact && auto.contact)
+        assertTrue("중앙이 덜 뒤집힌다", center.flipRatio < auto.flipRatio)
+        assertTrue("중앙이 더 높이 튄다", center.bounceHeight > auto.bounceHeight)
+        assertTrue("중앙이 더 세게 민다", center.pushSpeed > auto.pushSpeed)
+    }
+
+    @Test
+    fun `대각을 노리면 토크가 세다`() {
+        val diagonal = strike(power = 0.8f, target = StrikeTarget.DIAGONAL, defender = paper.copy(weakEdge = 0))
+        val center = strike(power = 0.8f, target = StrikeTarget.CENTER, defender = paper.copy(weakEdge = 0))
+        assertTrue(diagonal.contact && center.contact)
+        assertTrue("대각 ${diagonal.flipRatio} > 중앙 ${center.flipRatio}", diagonal.flipRatio > center.flipRatio)
+        assertEquals(9f, diagonal.approachDeg, 0.01f)
+    }
+
+    @Test
+    fun `모서리를 스치면 회전이 크게 붙는다`() {
+        val corner = strike(power = 0.8f, point = 0.5f, target = StrikeTarget.CORNER)
+        val center = strike(power = 0.8f, point = 0.5f, target = StrikeTarget.CENTER)
+        assertTrue("모서리 회전 ${corner.defenderSpin}", corner.defenderSpin > center.defenderSpin * 3f)
+        assertTrue(corner.approachDeg > 10f)
+    }
+
+    @Test
+    fun `들뜬 틈을 노리면 조준이 틈 쪽으로 보정된다`() {
+        val defender = paper.copy(weakEdge = 1) // 오른쪽 변이 들떠 있다
+        val assisted = strike(power = 0.7f, aim = 0f, point = 0.9f, target = StrikeTarget.WEAK_GAP, defender = defender)
+        val plain = strike(power = 0.7f, aim = 0f, point = 0.9f, target = StrikeTarget.AUTO, defender = defender)
+        assertTrue(assisted.approachDeg > plain.approachDeg)
+        assertTrue(kotlin.math.abs(assisted.approachDeg) <= SquareTtakjiEngine.GAP_ASSIST_MAX + 0.01f)
+    }
+
+    @Test
+    fun `노림 지점은 AI도 함께 고려한다`() {
+        val chosen = SquareTtakjiEngine.bestStrike(
+            attackerPos = player,
+            attacker = TtakjiSpec(TtakjiMaterial.COLOR_PAPER, 1),
+            defenderPos = ai,
+            defender = paper.copy(weakEdge = 0),
+            defenderAngleDeg = 0f,
+            surface = TtakjiSurface.DIRT,
+            forwardSign = -1f,
+            maxPower = 1f,
+            random = Random(17),
+            skill = 1f,
+        )
+        assertTrue(chosen.target in SquareTtakjiEngine.AI_TARGETS)
+    }
+
+    @Test
+    fun `아슬아슬한 수는 nearFlip 으로 표시된다`() {
+        val near = strike(power = 0.7f, point = 0.5f, defender = paper.copy(weakEdge = 0))
+        assertFalse(near.flipped)
+        assertTrue(near.tiltPeak in 65f..85f)
+        assertTrue(near.nearFlip)
+        val solid = strike(power = 1f, point = 0.95f)
+        assertTrue(solid.flipped)
+        assertFalse(solid.nearFlip)
+    }
+
+    @Test
+    fun `대각 조준은 정면보다 옆을 맞힌다`() {
+        val straight = strike(power = 0.9f, aim = 0f)
+        val angled = strike(power = 0.9f, aim = 20f)
+        assertTrue(straight.contact && angled.contact)
+        assertEquals(0f, straight.approachDeg, 0.01f)
+        assertEquals(20f, angled.approachDeg, 0.01f)
+        assertTrue(kotlin.math.abs(angled.contactOffset - straight.contactOffset) > 0.05f)
+    }
+
+    @Test
+    fun `파워가 세면 뒤집힘과 튕김이 함께 커진다`() {
+        val weak = strike(power = 0.5f, point = 0.6f, defender = paper.copy(weakEdge = 0))
+        val strong = strike(power = 0.95f, point = 0.6f, defender = paper.copy(weakEdge = 0))
+        assertTrue(strong.flipRatio > weak.flipRatio)
+        assertTrue(strong.bounceHeight > weak.bounceHeight)
+        assertTrue(strong.tiltPeak > weak.tiltPeak)
     }
 
     @Test

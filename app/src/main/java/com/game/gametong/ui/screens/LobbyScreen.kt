@@ -113,8 +113,9 @@ fun LobbyScreen(
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = "체험판 v0.2.0 — 딱지치기(네모 2.5D 물리·동그란 3종)와 구슬치기 두 종목을 바로 플레이할 수 있습니다. " +
-                        "지우개 따먹기 두 모드도 그대로! 공기놀이·뿌리기는 맛보기 데모입니다.",
+                    text = "체험판 v0.3.0 — 네모 딱지는 2.5D 물리(들림·웨이블·튕김)와 타격 위치·조준 지점·파워 조작, " +
+                        "지우개는 3D 블록·넘기며 전진·걸쳐 올라가기·책상 표면 마찰까지 들어갔습니다. " +
+                        "공기놀이·뿌리기는 맛보기 데모입니다.",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = Inks.SoftInk,
@@ -122,7 +123,7 @@ fun LobbyScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(18.dp))
         }
     }
 }

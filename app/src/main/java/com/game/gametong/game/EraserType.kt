@@ -12,6 +12,8 @@ enum class EraserType(
     val decel: Float,
     val restitution: Float,
     val speedMul: Float,
+    /** 3D 블록으로 그릴 때의 두께(무대 단위). */
+    val thickness: Float,
 ) {
     JUMBO(
         label = "소프트 점보",
@@ -21,6 +23,7 @@ enum class EraserType(
         decel = 1450f,
         restitution = 0.24f,
         speedMul = 0.84f,
+        thickness = 54f,
     ),
     STANDARD(
         label = "표준 지우개",
@@ -30,6 +33,7 @@ enum class EraserType(
         decel = 950f,
         restitution = 0.42f,
         speedMul = 1.0f,
+        thickness = 44f,
     ),
     NIMBLE(
         label = "날렵한 지우개",
@@ -39,6 +43,7 @@ enum class EraserType(
         decel = 780f,
         restitution = 0.58f,
         speedMul = 1.12f,
+        thickness = 34f,
     );
 
     companion object {
