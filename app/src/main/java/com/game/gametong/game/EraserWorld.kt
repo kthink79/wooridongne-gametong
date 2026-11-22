@@ -78,6 +78,8 @@ class EraserWorld(
             step()
             t += Board.DT
         }
+        // 멈춘 뒤에는 놓인 면이 반듯해진다.
+        for (body in bodies) if (!body.fallen) body.snapTumble()
         return t
     }
 

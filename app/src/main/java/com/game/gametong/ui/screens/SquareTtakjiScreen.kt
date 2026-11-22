@@ -65,7 +65,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.min
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 private const val FIELD_W = 1000f

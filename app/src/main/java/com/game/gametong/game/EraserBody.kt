@@ -1,6 +1,5 @@
 package com.game.gametong.game
 
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -71,10 +70,8 @@ data class EraserBody(
     /** 바닥에 놓인 면이 정확히 90도 배수가 되도록 정리한 각. */
     fun settledTumble(): Float = (tumble / 90f).roundToInt() * 90f
 
-    /** 지금 얼마나 기울었는지(0~90). 그리기용. */
-    fun tiltAmount(): Float {
-        val t = ((tumble % 360f) + 360f) % 360f
-        val quarter = t % 90f
-        return abs(if (quarter > 45f) 90f - quarter else quarter)
+    /** 멈출 때 바닥에 놓인 면이 반듯해지도록 텀블 각을 90도 배수로 맞춘다. */
+    fun snapTumble() {
+        tumble = settledTumble()
     }
 }

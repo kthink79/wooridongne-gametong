@@ -79,7 +79,6 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
 private val PlayerBodyColor = Color(0xFF3D6FC0)
 private val AiBodyColor = Color(0xFFCB4B40)
@@ -141,6 +140,9 @@ fun EraserBattleScreen(
                     repeat(2) { match.world.step() }
                     frame++
                     if (match.world.settled) {
+                        // 멈추면 놓인 면이 반듯해진다
+                        match.world.player.snapTumble()
+                        match.world.opponent.snapTumble()
                         when (match) {
                             is WrestlingMatch -> {
                                 lastOutcome = match.settleFlick()
