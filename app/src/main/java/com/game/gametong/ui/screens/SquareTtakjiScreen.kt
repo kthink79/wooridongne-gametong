@@ -127,6 +127,8 @@ fun SquareTtakjiScreen(
 
     val channel = remember(match) { SceneChannel() }
     val particles = remember(match) { ParticleSystem(capacity = 200) }
+    // 딱지 연출도 고정 타임스텝으로 돌린다(화면 주사율과 무관하게 같은 결론).
+    val fixed = remember(match) { com.game.gametong.game.physics3d.FixedTimestep(1f / 120f, maxSteps = 6) }
 
     val playerTurn = match.turn == Side.PLAYER
     val canStrike = !match.finished && !playing && !thinking && (playerTurn || twoPlayer)
@@ -146,11 +148,12 @@ fun SquareTtakjiScreen(
         view = FlightView(actor, f)
         var last = withFrameNanos { it }
         var dustClock = 0f
+        fixed.reset()
         while (!f.isFinished) {
             val now = withFrameNanos { it }
-            val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.05f)
+            val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
             last = now
-            f.advance(dt)
+            fixed.advance(dt) { step -> f.advance(step) }
             dustClock += dt
             if (dustClock > 0.05f) {
                 dustClock = 0f
