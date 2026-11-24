@@ -58,7 +58,7 @@ object TtakjiScene3D {
         yawDeg = 0f,
         fovYDeg = 44f,
         aspect = aspect,
-        margin = 1.2f,
+        margin = 1.0f,
     )
 
     fun fieldPoint(unitX: Float, unitY: Float, aspect: Float): Vec2? {
@@ -262,7 +262,7 @@ object MarbleScene3D {
         yawDeg = 0f,
         fovYDeg = 46f,
         aspect = aspect,
-        margin = 1.05f,
+        margin = 1.0f,
     )
 
     fun fieldPoint(unitX: Float, unitY: Float, aspect: Float, fieldHeight: Float): Vec2? {

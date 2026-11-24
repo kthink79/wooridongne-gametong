@@ -35,7 +35,7 @@
 - **네모 딱지 = 충격량 기반 동역학**: 공기압(얇고 가벼울수록 크게 뜸)·바닥 반발·무게중심 회전 모멘텀으로 튕김과 회전을 적분합니다.
 - **구슬 = 연속 충돌 검사(CCD) + 스핀**: 한 프레임에 구슬 지름보다 멀리 나는 고속 구슬도 관통하지 않도록 처음 닿는 시각을 풀어 처리합니다. 스치는 충돌은 가로 스핀(탑스핀/백스핀)을 만들고, 흙바닥 구름 마찰과 **구멍 언저리 경사**로 구멍에 미끄러져 들어갑니다.
 
-### 새 단위 테스트 (63개 추가, 총 196개)
+### 새 단위 테스트 (64개 추가, 총 197개)
 - `FixedStepTest`(5) — 고정 타임스텝 누적·최대 스텝·보간
 - `RigidBoxTest`(9) — 낙하·정지·경사·재질별 미끄러짐·반발·책상 밖 낙하·관성
 - `EraserDynamicsTest`(8) — 타격 세기/위치에 따른 기울기, 마찰별 안정화, 가장자리 넘어짐
@@ -44,7 +44,7 @@
 - `ParticleSystemTest`(5) — 가루 개수 상한·수명·중력
 - `Mat4Test`(8) — 투영·역투영·그림자 실루엣
 - `MeshTest`(7) — 메쉬 인덱스·법선·절차 텍스처
-- `SceneFramingTest`(5) — **무대 네 모서리와 물체가 실제로 화면 안에 맺히는지** 검증
+- `SceneFramingTest`(6) — **무대 네 모서리·물체가 화면 안에 맺히는지, 무대가 화면을 충분히 채우는지** 검증
 
 ## v0.3.0 에서 새로 들어간 것
 
@@ -146,7 +146,7 @@ export JAVA_HOME=/path/to/jdk17
 
 ## 테스트
 
-`./gradlew testDebugUnitTest` — **196개 단위 테스트**
+`./gradlew testDebugUnitTest` — **197개 단위 테스트**
 
 - `GeometryTest` — 원 겹침 넓이·핀 비율 계산
 - `EraserWorldTest` — 마찰·충돌·낙하 판정, 수비 고정, 표면별 미끄러짐·회전 감쇠, 텀블(넘기며 전진), 걸침(높이·기운 각), 타격 위치 회전(궤적 휨)
@@ -160,7 +160,7 @@ export JAVA_HOME=/path/to/jdk17
 - `RoundTtakjiTest`(17) — 붙여먹기 벽/덮어먹기, 멀리 날리기 힘·각도·바람·3점, 입바람 세기 변환·결승선·테이블 밖·4번 제한
 - `MarbleGameTest`(10) — 구슬 탄성 충돌·마찰 정지, 원 밖 따먹기, 구멍 순서/오답/3구멍 후 상대 구슬
 - `FixedStepTest`(5) · `RigidBoxTest`(9) · `EraserDynamicsTest`(8) · `SphereCcdTest`(10) · `TtakjiDynamicsTest`(6) · `ParticleSystemTest`(5) — 3D 물리 엔진
-- `Mat4Test`(8) · `MeshTest`(7) · `SceneFramingTest`(5) — 3D 렌더링(행렬·메쉬·화면 담김)
+- `Mat4Test`(8) · `MeshTest`(7) · `SceneFramingTest`(6) — 3D 렌더링(행렬·메쉬·화면 담김)
 
 ## 기획서
 

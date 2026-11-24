@@ -138,7 +138,7 @@ object EraserScene3D {
         yawDeg = 0f,
         fovYDeg = 40f,
         aspect = aspect,
-        margin = 1.02f,
+        margin = 1.0f,
     )
 
     /** 화면 좌표(0~1) → 책상 좌표. 손가락이 닿은 곳을 3D 위 정확한 자리로 옮긴다. */

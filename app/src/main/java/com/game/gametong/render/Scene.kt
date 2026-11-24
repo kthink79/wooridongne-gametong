@@ -76,14 +76,8 @@ data class Camera(
             yawDeg: Float = 0f,
             fovYDeg: Float = 42f,
             aspect: Float = 2f / 3f,
-            margin: Float = 1.04f,
+            margin: Float = 1.0f,
         ): Camera {
-            val radius = 0.5f * sqrt(width * width + depth * depth)
-            val fovX = 2f * kotlin.math.atan(
-                kotlin.math.tan(Math.toRadians(fovYDeg.toDouble() * 0.5).toFloat()) * aspect
-            ).toFloat()
-            val minFov = min(Math.toRadians(fovYDeg.toDouble()).toFloat(), fovX)
-            val dist = (radius / sin(minFov * 0.5f)) * margin
             val pitch = Math.toRadians(pitchDeg.toDouble())
             val yaw = Math.toRadians(yawDeg.toDouble())
             val dir = Vec3(
@@ -91,12 +85,44 @@ data class Camera(
                 sin(pitch).toFloat(),
                 (cos(yaw) * cos(pitch)).toFloat(),
             )
-            return Camera(
+            fun at(dist: Float) = Camera(
                 eye = center + dir * dist,
                 target = center,
                 fovYDeg = fovYDeg,
+                near = 0.05f,
                 far = dist * 4f + 20f,
             )
+            // 무대 네 모서리가 화면의 [fill] 비율 안에 들어오는 가장 가까운 거리를 이분 탐색으로 찾는다.
+            val halfW = width * 0.5f
+            val halfD = depth * 0.5f
+            val corners = listOf(
+                center + Vec3(-halfW, 0f, -halfD),
+                center + Vec3(halfW, 0f, -halfD),
+                center + Vec3(-halfW, 0f, halfD),
+                center + Vec3(halfW, 0f, halfD),
+            )
+            val fill = (0.95f / margin).coerceIn(0.6f, 0.98f)
+            val radius = 0.5f * sqrt(width * width + depth * depth)
+            var lo = radius * 0.3f
+            var hi = radius * 10f
+            repeat(26) {
+                val mid = (lo + hi) * 0.5f
+                val cam = at(mid)
+                var worst = 0f
+                for (corner in corners) {
+                    val uv = cam.projectToUnit(corner, aspect)
+                    if (uv == null) {
+                        worst = 4f
+                        break
+                    }
+                    val nx = kotlin.math.abs(uv[0] * 2f - 1f)
+                    val ny = kotlin.math.abs(uv[1] * 2f - 1f)
+                    if (nx > worst) worst = nx
+                    if (ny > worst) worst = ny
+                }
+                if (worst > fill) lo = mid else hi = mid
+            }
+            return at(hi)
         }
 
         /** 세로 화면(2:3)에서 위에서 살짝 내려다보는 기본값. */

@@ -54,6 +54,66 @@ class SceneFramingTest {
         }
     }
 
+    /** 무대 네 모서리가 화면에서 차지하는 가로·세로 비율. */
+    private fun spans(
+        scene: Scene,
+        cx: Float,
+        cz: Float,
+        halfW: Float,
+        halfD: Float,
+        sceneAspect: Float = aspect,
+    ): Pair<Float, Float> {
+        val us = ArrayList<Float>()
+        val vs = ArrayList<Float>()
+        for (sx in listOf(-1f, 1f)) {
+            for (sz in listOf(-1f, 1f)) {
+                val uv = scene.project(Vec3(cx + halfW * sx, 0f, cz + halfD * sz), sceneAspect)
+                assertNotNull("모서리가 화면 밖", uv)
+                us += uv!![0]
+                vs += uv[1]
+            }
+        }
+        return (us.max() - us.min()) to (vs.max() - vs.min())
+    }
+
+    @Test
+    fun `무대가 화면을 충분히 채운다`() {
+        // 카메라가 너무 멀면 경기가 작게 보인다. 무대는 최소 한 방향으로 화면을 거의 채워야 한다.
+        val w = world()
+        val eraser = EraserScene3D.build(
+            bodies = w.bodies, activeSide = Side.PLAYER, surface = DeskSurface.WOOD,
+            aim = null, particles = emptyList(), aspect = aspect,
+        )
+        val (ew, eh) = spans(eraser, 5f, 7.5f, 4.9f, 7.05f)
+        assertTrue("지우개 무대 채움 ${ew} x ${eh}", maxOf(ew, eh) > 0.85f)
+        assertTrue("지우개 무대가 너무 작다 ${ew} x ${eh}", minOf(ew, eh) > 0.4f)
+
+        val match = SquareTtakjiMatch(
+            surface = TtakjiSurface.DIRT,
+            playerSpec = TtakjiSpec(TtakjiMaterial.COLOR_PAPER, 2),
+            aiSpec = TtakjiSpec(TtakjiMaterial.CARDSTOCK, 2),
+        )
+        val ttakji = TtakjiScene3D.build(match, null, null, null, emptyList(), aspect)
+        val (tw, th) = spans(ttakji, 5f, 7.5f, 5.2f, 7.3f)
+        assertTrue("딱지 무대 채움 ${tw} x ${th}", maxOf(tw, th) > 0.85f)
+        assertTrue("딱지 무대가 너무 작다 ${tw} x ${th}", minOf(tw, th) > 0.4f)
+
+        val holeGame = MarbleHoleGame(twoPlayer = true)
+        val marble = MarbleScene3D.build(
+            marbles = listOf(holeGame.playerMarble, holeGame.aiMarble),
+            king = null,
+            holes = holeGame.holes,
+            playRadius = null,
+            aim = null,
+            particles = emptyList(),
+            aspect = 0.95f,
+            fieldHeight = 1080f,
+        )
+        val (mw, mh) = spans(marble, 5f, 5.4f, 5.3f, 5.4f, 0.95f)
+        assertTrue("구슬 무대 채움 ${mw} x ${mh}", maxOf(mw, mh) > 0.85f)
+        assertTrue("구슬 무대가 너무 작다 ${mw} x ${mh}", minOf(mw, mh) > 0.4f)
+    }
+
     @Test
     fun `지우개 두 개가 화면 안에 보인다`() {
         val w = world()
