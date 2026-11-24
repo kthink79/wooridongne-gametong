@@ -178,7 +178,7 @@ object EraserScene3D {
             ),
             color = Color4.rgb(0x7A4E28),
             texture = TexKind.WOOD,
-            uvScale = 2.4f,
+            uvScale = 3.5f,
             specular = 0.08f,
             shininess = 20f,
         )
@@ -368,7 +368,7 @@ object EraserScene3D {
                 } else {
                     TexKind.WOOD
                 },
-                uvScale = look.uvScale * 2.6f,
+                uvScale = look.uvScale * 5.0f,
                 color = look.tint,
                 gloss = look.gloss,
             ),

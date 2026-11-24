@@ -83,6 +83,42 @@ class MeshTest {
     }
 
     @Test
+    fun `바닥 텍스처는 이어 붙여도 이음매가 없다`() {
+        // 타일을 반복해 깔아도 경계가 드러나지 않아야 한다(주기 잡음).
+        for (kind in listOf(TexKind.WOOD, TexKind.CEMENT, TexKind.DIRT)) {
+            val size = 64
+            val tex = ProceduralTextures.pixels(kind, size)
+            fun luma(index: Int): Int {
+                val p = tex[index]
+                return ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3
+            }
+            fun columnDiff(a: Int, b: Int): Float {
+                var sum = 0
+                for (r in 0 until size) sum += kotlin.math.abs(luma(r * size + a) - luma(r * size + b))
+                return sum.toFloat() / size
+            }
+            fun rowDiff(a: Int, b: Int): Float {
+                var sum = 0
+                for (c in 0 until size) sum += kotlin.math.abs(luma(a * size + c) - luma(b * size + c))
+                return sum.toFloat() / size
+            }
+            // 이음매(마지막 줄 ↔ 첫 줄)는 바로 옆 줄끼리의 차이와 비슷해야 한다.
+            val horizontalSeam = columnDiff(0, size - 1)
+            val horizontalNeighbour = kotlin.math.max(columnDiff(0, 1), columnDiff(size - 2, size - 1))
+            val verticalSeam = rowDiff(0, size - 1)
+            val verticalNeighbour = kotlin.math.max(rowDiff(0, 1), rowDiff(size - 2, size - 1))
+            assertTrue(
+                "$kind 가로 이음매 $horizontalSeam vs 이웃 줄 $horizontalNeighbour",
+                horizontalSeam <= horizontalNeighbour * 2f + 3f,
+            )
+            assertTrue(
+                "$kind 세로 이음매 $verticalSeam vs 이웃 줄 $verticalNeighbour",
+                verticalSeam <= verticalNeighbour * 2f + 3f,
+            )
+        }
+    }
+
+    @Test
     fun `바닥 텍스처는 밝고, 그림자 텍스처는 가운데가 진하다`() {
         val wood = ProceduralTextures.pixels(TexKind.WOOD, 16)
         val centerAverage = wood.sumOf { ((it shr 16) and 0xFF).toInt() } / wood.size

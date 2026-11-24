@@ -4,6 +4,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -38,12 +39,15 @@ enum class TexKind {
 /**
  * 절차적 텍스처 생성기.
  *
- * 모든 무늬는 **시드가 고정된 해시 잡음**으로 만들어서, 앱을 다시 켜도 같은 결이 나온다.
+ * 모든 무늬는 **시드가 고정된 주기 잡음**으로 만든다. 잡음의 격자를 타일 크기에 맞춰 감아
+ * 이어 붙이므로, 바닥에 여러 번 반복해 깔아도 이음매가 보이지 않는다.
  * 좌표는 0~1 로 정규화해 두어 어떤 해상도로 구워도 같은 그림이 나온다.
  */
 object ProceduralTextures {
 
     const val DEFAULT_SIZE = 256
+
+    private const val TAU = (PI * 2.0).toFloat()
 
     /** 종류별 픽셀(ARGB). 투명도가 있는 무늬는 알파도 채운다. */
     fun pixels(kind: TexKind, size: Int = DEFAULT_SIZE): IntArray {
@@ -73,110 +77,102 @@ object ProceduralTextures {
 
     // ── 무늬 ────────────────────────────────────────────────────
 
-    /** 나뭇결: 결을 따라 흐르는 물결 + 옹이 + 미세 기공. */
+    /** 나뭇결: 결을 따라 흐르는 물결 + 나이테 + 미세 기공. */
     private fun wood(u: Float, v: Float): Int {
-        // 결은 v 방향으로 흐른다(책상 앞뒤).
-        val warp = noise(u * 3.1f, v * 0.7f) * 0.35f + sin((u * 9.0 + v * 1.2).toDouble()).toFloat() * 0.06f
-        val ring = ((v * 26f + warp * 6f) % 1f)
+        // 결은 v 방향으로 흐른다(책상 앞뒤). 모든 주파수는 정수라 이음매가 없다.
+        val warp = pnoise(u * 3f, v * 1f, 3, 1) * 0.35f + sin((u * 9f + v * 2f) * TAU) * 0.05f
+        val ring = (v * 26f + warp * 6f) % 1f
         val line = smooth(0.0f, 0.16f, abs(ring - 0.5f) * 2f)
-        val fine = noise(u * 40f, v * 220f) * 0.10f
-        val knot = if (noise(u * 2.3f + 7.1f, v * 2.1f) > 0.86f) 0.10f else 0f
-        val shade = 0.72f + 0.20f * line + fine - knot
-        val r = (138 * shade).toInt().coerceIn(0, 255)
-        val gr = (86 * shade).toInt().coerceIn(0, 255)
-        val b = (44 * shade).toInt().coerceIn(0, 255)
-        return argb(255, r, gr, b)
+        val fine = pnoise(u * 40f, v * 220f, 40, 220) * 0.12f
+        val knot = if (pnoise(u * 2f, v * 2f, 2, 2) > 0.87f) 0.10f else 0f
+        val shade = (0.70f + 0.22f * line + fine - knot).coerceIn(0.35f, 1f)
+        return argb(255, (146 * shade).toInt(), (92 * shade).toInt(), (48 * shade).toInt())
     }
 
     /** 시멘트: 회색 얼룩 + 자잘한 자갈 + 가는 금. */
     private fun cement(u: Float, v: Float): Int {
-        val base = 0.62f + noise(u * 6f, v * 6f) * 0.16f + noise(u * 26f, v * 26f) * 0.10f
-        val grit = if (noise(u * 90f, v * 90f) > 0.88f) 0.12f else 0f
-        val crack = if (abs(noise(u * 3.4f, v * 3.4f + 2f) - 0.5f) < 0.012f) -0.16f else 0f
+        val base = 0.60f + pnoise(u * 6f, v * 6f, 6, 6) * 0.18f + pnoise(u * 26f, v * 26f, 26, 26) * 0.10f
+        val grit = if (pnoise(u * 90f, v * 90f, 90, 90) > 0.88f) 0.12f else 0f
+        val crackSeed = pnoise(u * 3f, v * 3f, 3, 3)
+        val crack = if (abs(crackSeed - 0.5f) < 0.010f) -0.15f else 0f
         val s = (base + grit + crack).coerceIn(0.3f, 1f)
-        val r = (176 * s).toInt()
-        val g = (171 * s).toInt()
-        val b = (158 * s).toInt()
-        return argb(255, r, g, b)
+        return argb(255, (178 * s).toInt(), (172 * s).toInt(), (158 * s).toInt())
     }
 
-    /** 흙바닥: 마른 흙 + 굵은 자갈 + 밟힌 자국. */
+    /** 흙바닥: 마른 흙 + 자갈 + 밟힌 자국. */
     private fun dirt(u: Float, v: Float): Int {
-        val blot = noise(u * 4f, v * 4f)
-        val fine = noise(u * 55f, v * 55f)
-        val pebble = if (noise(u * 14f + 3f, v * 14f) > 0.80f) 0.18f else 0f
-        val s = (0.55f + blot * 0.24f + fine * 0.14f - pebble * 0.5f).coerceIn(0.25f, 1f)
-        val r = (168 * s + pebble * 40).toInt().coerceIn(0, 255)
-        val g = (118 * s + pebble * 30).toInt().coerceIn(0, 255)
-        val b = (72 * s).toInt().coerceIn(0, 255)
-        return argb(255, r, g, b)
+        val blot = pnoise(u * 4f, v * 4f, 4, 4)
+        val fine = pnoise(u * 55f, v * 55f, 55, 55)
+        val pebble = if (pnoise(u * 14f, v * 14f, 14, 14) > 0.80f) 0.18f else 0f
+        val s = (0.54f + blot * 0.26f + fine * 0.14f - pebble * 0.5f).coerceIn(0.25f, 1f)
+        return argb(
+            255,
+            (170 * s + pebble * 42).toInt().coerceIn(0, 255),
+            (120 * s + pebble * 30).toInt().coerceIn(0, 255),
+            (74 * s).toInt().coerceIn(0, 255),
+        )
     }
 
     /** 종이: 아주 옅은 섬유 결(색은 재질 색으로 곱한다). */
     private fun paper(u: Float, v: Float): Int {
-        val fiber = noise(u * 70f, v * 70f) * 0.10f + noise(u * 180f, v * 12f) * 0.06f
-        val speck = if (noise(u * 120f, v * 120f) > 0.93f) 0.07f else 0f
-        val s = (0.94f + fiber - speck).coerceIn(0.7f, 1f)
+        val fiber = pnoise(u * 70f, v * 70f, 70, 70) * 0.09f + pnoise(u * 180f, v * 12f, 180, 12) * 0.06f
+        val speck = if (pnoise(u * 120f, v * 120f, 120, 120) > 0.93f) 0.07f else 0f
+        val s = (0.95f + fiber - speck).coerceIn(0.7f, 1f)
         val c = (255 * s).toInt()
         return argb(255, c, c, c)
     }
 
     /** 고무: 무광 크림색 + 미세 기공. */
     private fun rubber(u: Float, v: Float): Int {
-        val pore = noise(u * 130f, v * 130f) * 0.10f
-        val wear = noise(u * 8f, v * 8f) * 0.06f
-        val s = (0.90f + wear - pore).coerceIn(0.6f, 1f)
+        val pore = pnoise(u * 130f, v * 130f, 130, 130) * 0.09f
+        val wear = pnoise(u * 8f, v * 8f, 8, 8) * 0.06f
+        val s = (0.91f + wear - pore).coerceIn(0.6f, 1f)
         val c = (250 * s).toInt()
         return argb(255, c, (c * 0.985f).toInt(), (c * 0.94f).toInt())
     }
 
     /** 유리구슬 속 회오리: 극좌표로 감기는 띠 + 흰 코어. */
     private fun marble(u: Float, v: Float): Int {
-        val cx = 0.5f
-        val cy = 0.5f
-        val dx = u - cx
-        val dy = v - cy
+        val dx = u - 0.5f
+        val dy = v - 0.5f
         val r = sqrt(dx * dx + dy * dy)
         val a = atan2(dy.toDouble(), dx.toDouble()).toFloat()
-        val spiral = sin((a * 3f + r * 22f).toDouble()).toFloat()
+        val spiral = sin((a * 3f + r * 24f).toDouble()).toFloat()
         val band = smooth(0.15f, 0.55f, spiral)
         val core = smooth(0.45f, 0.12f, r)
-        val s = 0.35f + band * 0.55f + core * 0.25f
-        val c = (255 * s.coerceIn(0f, 1f)).toInt()
-        // 회오리 사이는 투명하게 비워 유리 속처럼 보이게
-        val alpha = (110 + band * 120 + core * 40).toInt().coerceIn(0, 255)
+        val s = (0.35f + band * 0.55f + core * 0.25f).coerceIn(0f, 1f)
+        val c = (255 * s).toInt()
+        val alpha = (120 + band * 110 + core * 40).toInt().coerceIn(0, 255)
         return argb(alpha, c, c, c)
     }
 
-    /** 부드러운 원(그림자·먼지). */
     private fun soft(u: Float, v: Float): Int {
         val dx = u - 0.5f
         val dy = v - 0.5f
         val r = sqrt(dx * dx + dy * dy) * 2f
-        val a = (1f - smooth(0.15f, 1f, r)) 
-        val alpha = (a * 255).toInt().coerceIn(0, 255)
-        return argb(alpha, 255, 255, 255)
+        val a = 1f - smooth(0.15f, 1f, r)
+        return argb((a * 255).toInt().coerceIn(0, 255), 255, 255, 255)
     }
 
     private fun dust(u: Float, v: Float): Int {
         val dx = u - 0.5f
         val dy = v - 0.5f
         val r = sqrt(dx * dx + dy * dy) * 2f
-        val a = (1f - smooth(0.0f, 1f, r)) * (0.75f + noise(u * 30f, v * 30f) * 0.35f)
+        val a = (1f - smooth(0.0f, 1f, r)) * (0.75f + pnoise(u * 30f, v * 30f, 30, 30) * 0.35f)
         return argb((a * 200).toInt().coerceIn(0, 255), 255, 250, 240)
     }
 
     private fun crumb(u: Float, v: Float): Int {
         val dx = u - 0.5f
         val dy = v - 0.5f
-        val wob = 0.32f + noise(u * 8f, v * 8f) * 0.16f
+        val wob = 0.32f + pnoise(u * 8f, v * 8f, 8, 8) * 0.16f
         val d = sqrt(dx * dx + dy * dy)
         val a = if (d < wob) 1f else (1f - smooth(wob, wob + 0.10f, d)).coerceIn(0f, 1f)
         return argb((a * 255).toInt(), 252, 246, 232)
     }
 
     private fun chalk(u: Float, v: Float): Int {
-        val g = 0.80f + noise(u * 60f, v * 60f) * 0.20f
+        val g = 0.80f + pnoise(u * 60f, v * 60f, 60, 60) * 0.20f
         return argb(255, (255 * g).toInt(), (255 * g).toInt(), (250 * g).toInt())
     }
 
@@ -196,14 +192,19 @@ object ProceduralTextures {
             ((g.coerceIn(0, 255)) shl 8) or
             (b.coerceIn(0, 255))
 
-    /** 0~1 사이 결정적 잡음(값 잡음). 같은 좌표면 언제나 같은 값. */
-    fun noise(x: Float, y: Float): Float {
-        val xi = kotlin.math.floor(x).toInt()
-        val yi = kotlin.math.floor(y).toInt()
+    /**
+     * 주기 잡음(값 잡음). 격자를 [px]×[py] 로 감아 두어 텍스처를 이어 붙여도 이음매가 없다.
+     * [px]·[py] 는 주파수(정수)와 같게 준다.
+     */
+    fun pnoise(x: Float, y: Float, px: Int, py: Int): Float {
+        val xi = floor(x).toInt()
+        val yi = floor(y).toInt()
         val xf = x - xi
         val yf = y - yi
         fun hash(a: Int, b: Int): Float {
-            var h = a * 374761393 + b * 668265263
+            val aa = if (px > 0) ((a % px) + px) % px else a
+            val bb = if (py > 0) ((b % py) + py) % py else b
+            var h = aa * 374761393 + bb * 668265263
             h = (h xor (h shr 13)) * 1274126177
             h = h xor (h shr 16)
             return ((h and 0x7FFFFFFF) % 100000).toFloat() / 100000f
@@ -218,6 +219,9 @@ object ProceduralTextures {
         val b = v01 + (v11 - v01) * sx
         return a + (b - a) * sy
     }
+
+    /** 주기 없는 잡음(작은 장식용). */
+    fun noise(x: Float, y: Float): Float = pnoise(x, y, 0, 0)
 
     private fun smooth(edge0: Float, edge1: Float, x: Float): Float {
         if (abs(edge1 - edge0) < 1e-6f) return if (x < edge0) 0f else 1f
