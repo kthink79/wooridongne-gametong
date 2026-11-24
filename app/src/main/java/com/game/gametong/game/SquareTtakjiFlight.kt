@@ -1,5 +1,6 @@
 package com.game.gametong.game
 
+import com.game.gametong.game.physics3d.TtakjiDynamics
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
@@ -42,6 +43,16 @@ class SquareTtakjiFlight(
     private val surface: TtakjiSurface,
     private val forwardSign: Float,
 ) {
+    /**
+     * 맞은 딱지의 3D 동역학(공기압·바닥 충격량·회전 모멘텀).
+     * Z축 바운스와 수직축 회전을 이 모듈이 적분한다.
+     */
+    private val dyn = TtakjiDynamics(
+        size = defenderSpec.size,
+        thickness = defenderSpec.thick.toFloat(),
+        mass = 1f + defenderSpec.thick * 0.12f,
+    )
+
     companion object {
         /** 무대 단위 중력(단위/초²). */
         const val GRAVITY = 5200f
@@ -107,7 +118,7 @@ class SquareTtakjiFlight(
     var defenderSpeed: Float = 0f
         private set
 
-    private var defenderVz: Float = 0f
+    private val defenderVz: Float get() = dyn.vz
     private val defenderDecel: Float = surface.friction * defenderSpec.material.frictionMul + 1f
 
     // ── 공격 딱지 ──
@@ -215,11 +226,17 @@ class SquareTtakjiFlight(
         attackerVz = 40f * result.appliedPower * (0.4f + surface.bounce)
         attackerTilt = minOf(14f, result.appliedPower * 16f)
 
-        // 맞은 딱지는 밀려나며 튀고 돌기 시작한다.
+        // 맞은 딱지는 밀려나며 토고 돌기 시작한다.
         defenderSpeed = result.pushSpeed
-        defenderVz = sqrt(2f * GRAVITY * result.bounceHeight.coerceAtLeast(0f))
+        // 공기압·무게중심 모멘텀을 따르는 3D 동역학으로 튀어 오른다.
+        dyn.launch(
+            altitude = result.bounceHeight.coerceAtLeast(0f),
+            spin = result.defenderSpin,
+            lever = abs(result.contactOffset),
+            gravity = GRAVITY,
+        )
         defenderTilt = 0f
-        defenderYaw = 0f
+        defenderYaw = dyn.yaw
         defenderRoll = 0f
     }
 
@@ -237,27 +254,10 @@ class SquareTtakjiFlight(
             defenderSpeed = if (next <= Board.REST_SPEED) 0f else next
         }
 
-        // 2) Z축 바운스(공중으로 튀어 올랐다가 몇 번 튄다)
-        if (defenderZ > 0f || defenderVz > 0f) {
-            defenderZ += defenderVz * dt
-            defenderVz -= GRAVITY * dt
-            if (defenderZ <= 0f) {
-                defenderZ = 0f
-                val impactSpeed = abs(defenderVz)
-                val restitution = 0.30f + 0.35f * surface.bounce
-                // 약한 튕김은 삼킨다(안 그러면 바닥에서 영원히 미세하게 튄다).
-                defenderVz = if (impactSpeed > MIN_BOUNCE_VZ) impactSpeed * restitution else 0f
-            }
-            if (defenderZ <= REST_Z && abs(defenderVz) <= REST_VZ) {
-                defenderZ = 0f
-                defenderVz = 0f
-            }
-        }
-
-        // 3) 회전(yaw) — 지수 감쇠하는 각속도의 적분
-        defenderYaw = result.defenderSpin / SPIN_DECAY *
-            (1f - exp(-SPIN_DECAY * since)) *
-            (1f + 0.15f * sin((WOBBLE_FREQ * since).toDouble()).toFloat())
+        // 2) Z축 바운스·회전: 공기압과 바닥 충격량을 따르는 동역학
+        dyn.step(dt, surface.bounce, GRAVITY)
+        defenderZ = dyn.z
+        defenderYaw = dyn.yaw
 
         // 4) 들림(tilt) — 뒤집힘 또는 아슬아슬 웨이블
         updateTilt(since)

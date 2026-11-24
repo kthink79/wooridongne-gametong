@@ -12,8 +12,8 @@ android {
         applicationId = "com.game.gametong"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -57,6 +57,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    // 단위 테스트는 한 프로세스에서 차례로 돌린다(기기·CI 메모리 절약, 결과 재현성).
+    testOptions {
+        unitTests.all {
+            it.maxHeapSize = "1024m"
+            it.maxParallelForks = 1
+            it.jvmArgs("-XX:ActiveProcessorCount=1", "-XX:MaxMetaspaceSize=320m")
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 package com.game.gametong.game
 
+import com.game.gametong.game.physics3d.MarbleSpin
+import com.game.gametong.game.physics3d.SphereCcd
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -15,14 +17,23 @@ data class MarbleBody(
     val radius: Float = 24f,
     val king: Boolean = false,
     var sunk: Boolean = false,
+    /** 굴러가는 각도(도). 무늬가 도는 연출에 쓴다. */
+    var spin: Float = 0f,
+    /** 가로 스핀(탑스핀·백스핀, 도/초). 궤적을 살짝 휘게 한다. */
+    var sideSpin: Float = 0f,
 ) {
     val mass: Float get() = radius * radius * (if (king) 1.6f else 1f)
-    val moving: Boolean get() = !sunk && vel.length() > 6f
+    val moving: Boolean get() = !sunk && vel.length() > 1f
 }
 
 /**
- * 구슬 여러 개가 구르는 바닥. 마찰 감속 + 다중 탄성 충돌을 계산한다.
- * 바닥 경계(테이블 가장자리)에서는 살짝 튕겨 나간다.
+ * 구슬 여러 개가 구르는 바닥.
+ *
+ * - **연속 충돌 검사(CCD)**: 고속으로 나는 구슬도 상대를 관통하지 않도록,
+ *   이번 스텝 안에서 처음 닿는 시각을 풀어 그 지점에서 충돌을 처리한다([SphereCcd]).
+ * - **탄성 충돌**: 질량·반발계수를 부른 순차 임펄스.
+ * - **스핀**: 스치는 충돌은 가로 스핀을 옮겨 궤적을 살짝 휘게 하고, 굴러가는 각도를 적분한다.
+ * - **구멍 경사**: 구멍 근처에서는 바닥이 비스듬해져 구멍 쪽으로 미끄러져 내려간다([holeSlope]).
  */
 class MarbleWorld(
     val width: Float = 1000f,
@@ -30,6 +41,11 @@ class MarbleWorld(
     val friction: Float = 480f,
     val restitution: Float = 0.94f,
     val marbles: MutableList<MarbleBody> = mutableListOf(),
+    /** 구멍 위치(구멍치기). 비어 있으면 경사가 없다. */
+    val holes: List<Vec2> = emptyList(),
+    val holeRadius: Float = 0f,
+    /** 구멍으로 미끄러지는 가속도(단위/초²). 0이면 경사가 없다. */
+    val holeSlope: Float = 0f,
 ) {
     var lastHitA: Int = -1
     var lastHitB: Int = -1
@@ -45,17 +61,89 @@ class MarbleWorld(
         body.vel = vel
     }
 
-    fun step(dt: Float = 1f / 120f) {
+    fun step(dt: Float = FIXED_DT) {
         elapsed += dt
+        // 구멍 언저리 경사는 마찰보다 먼저 작용한다(비스듬한 바닥에 놓인 구슬이 굴러 내려간다).
+        applyHoleSlope(dt)
+        var remaining = dt
+        var guard = 0
+        while (remaining > 1e-5f && guard < 10) {
+            guard++
+            val t = earliestImpact(remaining)
+            when {
+                t == null -> {
+                    integrate(remaining)
+                    resolveWalls()
+                    remaining = 0f
+                }
+                t <= 1e-5f -> {
+                    resolveCollisions()
+                    resolveWalls()
+                    integrate(1e-4f)
+                    remaining -= 1e-4f
+                }
+                else -> {
+                    integrate(t)
+                    resolveCollisions()
+                    resolveWalls()
+                    remaining -= t
+                }
+            }
+        }
+        applySpin(dt)
+    }
+
+    /** 이번 시간창(초) 안에서 가장 빨리 부딪히는 시각(초). 없으면 null. */
+    private fun earliestImpact(window: Float): Float? {
+        var best: Float? = null
+        for (i in marbles.indices) {
+            val a = marbles[i]
+            if (a.sunk || a.vel.lengthSq() < 1e-6f) continue
+            for (j in i + 1 until marbles.size) {
+                val b = marbles[j]
+                if (b.sunk) continue
+                // 시간 단위(초)로 바로 나온다.
+                val t = SphereCcd.timeOfImpact(a.pos, a.vel, b.pos, b.vel, a.radius + b.radius)
+                if (t != null && t <= window) {
+                    if (best == null || t < best!!) best = t
+                }
+            }
+        }
+        for (m in marbles) {
+            if (m.sunk || m.vel.lengthSq() < 1e-6f) continue
+            val t = SphereCcd.wallTimeOfImpact(
+                m.pos, m.vel,
+                minX = m.radius, maxX = width - m.radius,
+                minY = m.radius, maxY = height - m.radius,
+            )
+            if (t != null && t <= window) {
+                if (best == null || t < best!!) best = t
+            }
+        }
+        return best
+    }
+
+    private fun Vec2.lengthSq(): Float = x * x + y * y
+
+    /** 마찰하며 위치를 옮긴다. */
+    private fun integrate(slice: Float) {
+        if (slice <= 0f) return
         for (m in marbles) {
             if (m.sunk) continue
             val v = m.vel.length()
             if (v > 0f) {
-                val next = (v - friction * dt).coerceAtLeast(0f)
-                m.vel = if (next <= 5f) Vec2.ZERO else m.vel * (next / v)
+                val next = (v - friction * slice).coerceAtLeast(0f)
+                m.vel = if (next <= 1f) Vec2.ZERO else m.vel * (next / v)
             }
             if (m.vel.length() <= 0f) continue
-            m.pos = m.pos + m.vel * dt
+            m.pos = m.pos + m.vel * slice
+        }
+    }
+
+    /** 바닥 경계에서 살짝 튕긴다. */
+    private fun resolveWalls() {
+        for (m in marbles) {
+            if (m.sunk) continue
             if (m.pos.x < m.radius) {
                 m.pos = Vec2(m.radius, m.pos.y)
                 m.vel = Vec2(-m.vel.x * restitution, m.vel.y)
@@ -71,7 +159,6 @@ class MarbleWorld(
                 m.vel = Vec2(m.vel.x, -m.vel.y * restitution)
             }
         }
-        resolveCollisions()
     }
 
     fun resolveCollisions() {
@@ -99,6 +186,48 @@ class MarbleWorld(
                 val impulse = -(1f + restitution) * vn / invSum
                 a.vel = a.vel - n * (impulse * invA)
                 b.vel = b.vel + n * (impulse * invB)
+
+                // 스치는 충돌: 접선 속도가 가로 스핀으로 옮겨 붙는다(백스핀/탑스핀).
+                val tangent = Vec2(-n.y, n.x)
+                val tangential = rel.dot(tangent)
+                a.sideSpin += tangential * 0.16f
+                b.sideSpin -= tangential * 0.16f
+            }
+        }
+    }
+
+    /** 굴러가는 각도와 가로 스핀(궤적을 살짝 휘게 한다). */
+    private fun applySpin(dt: Float) {
+        for (m in marbles) {
+            if (m.sunk) continue
+            val speed = m.vel.length()
+            if (speed > 0f) {
+                m.spin = (m.spin + MarbleSpin.rollRate(speed, m.radius) * dt) % 360f
+                if (m.sideSpin != 0f) {
+                    val dir = m.vel * (1f / speed)
+                    val lateral = Vec2(-dir.y, dir.x)
+                    m.vel = m.vel + lateral * (m.sideSpin * 0.30f * dt)
+                }
+            }
+            m.sideSpin *= kotlin.math.exp((-MarbleSpin.DECAY * dt).toDouble()).toFloat()
+            if (kotlin.math.abs(m.sideSpin) < 1f) m.sideSpin = 0f
+        }
+    }
+
+    /** 구멍 근처의 비스듬한 바닥: 구멍 쪽으로 미끄러져 내려간다. */
+    private fun applyHoleSlope(dt: Float) {
+        if (holes.isEmpty() || holeSlope <= 0f || holeRadius <= 0f) return
+        val reach = holeRadius * 1.25f
+        for (m in marbles) {
+            if (m.sunk) continue
+            // 빠르게 지나가는 구슬은 구멍 언저리를 그냥 넘어간다(굴러 넘는 물리).
+            if (m.vel.length() > 300f) continue
+            for (hole in holes) {
+                val d = m.pos.distanceTo(hole)
+                if (d > reach || d < 0.5f) continue
+                val dir = (hole - m.pos).normalized()
+                val strength = holeSlope * (0.5f + 0.5f * (1f - d / reach))
+                m.vel = m.vel + dir * (strength * dt)
             }
         }
     }
@@ -107,9 +236,14 @@ class MarbleWorld(
         var t = 0f
         while (moving && t < maxSeconds) {
             step()
-            t += 1f / 120f
+            t += FIXED_DT
         }
         return t
+    }
+
+    companion object {
+        /** 고정 타임스텝(초). 120Hz 로 계산한다. */
+        const val FIXED_DT = 1f / 120f
     }
 }
 
@@ -317,6 +451,9 @@ class MarbleHoleGame(
         const val CATCH_SPEED = 470f
         const val MAX_TURNS = 10
         const val WIN_SCORE = 3
+
+        /** 구멍 가장자리의 비스듬한 경사(구멍으로 빨려 들어가는 가속도, 단위/초²). */
+        const val HOLE_SLOPE = 1800f
     }
 
     val holes = listOf(Vec2(500f, 250f), Vec2(500f, 530f), Vec2(500f, 810f))
@@ -331,6 +468,9 @@ class MarbleHoleGame(
         friction = 460f,
         restitution = 0.95f,
         marbles = mutableListOf(playerMarble, aiMarble),
+        holes = holes,
+        holeRadius = HOLE_R,
+        holeSlope = HOLE_SLOPE,
     )
 
     var turn: Side = Side.PLAYER

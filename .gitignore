@@ -11,3 +11,7 @@ local.properties
 
 # Gradle 가 HOME 을 잘못 잡을 때 생기는 캐시 폴더
 \?/
+
+# 코틀린 컴파일 세션 캐시
+.kotlin/
+hs_err_pid*.log

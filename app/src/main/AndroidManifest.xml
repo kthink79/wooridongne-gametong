@@ -4,6 +4,11 @@
     <!-- 입바람 넘기기 모드에서만 쓰고, 권한이 없으면 스와이프·탭으로 대체한다. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- 게임 통의 3D 렌더링은 OpenGL ES 2.0 으로 그린다(없는 기기에서는 설치 제한 없이 소프트웨어 경로). -->
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -16,6 +21,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/Theme.Gametong">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

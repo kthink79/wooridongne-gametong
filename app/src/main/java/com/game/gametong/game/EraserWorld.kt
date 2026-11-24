@@ -29,6 +29,10 @@ class EraserWorld(
     var lastImpact: Float = 0f
         private set
 
+    /** 이번 스텝에서 부딪힌 세기. 가루 파티클을 이 값으로 터뜨린다. */
+    var lastStepImpact: Float = 0f
+        private set
+
     val bodies: List<EraserBody> get() = listOf(player, opponent)
 
     fun bodyOf(side: Side): EraserBody = if (side == Side.PLAYER) player else opponent
@@ -52,6 +56,8 @@ class EraserWorld(
         body.vel = velocity
         body.spinSpeed = velocity.length() * (off * 0.075f)
         body.lean = (off * 16f).coerceIn(-24f, 24f)
+        // 3D 강체: 중심에서 벗어난 타격은 각운동량을 붙여 옆으로/앞으로 기울인다.
+        body.dyn.strike(off, velocity.length(), strikeHeight = 0.28f)
         body.climbing = false
         body.perchedOn = null
         if (velocity.length() > 60f) {
@@ -62,6 +68,7 @@ class EraserWorld(
 
     fun step(dt: Float = Board.DT) {
         elapsed += dt
+        lastStepImpact = 0f
         for (body in bodies) {
             if (body.fallen) continue
             if (immovableSide == body.side) continue
@@ -69,6 +76,32 @@ class EraserWorld(
         }
         handleContact()
         for (body in bodies) checkFall(body)
+        updateDynamics(dt)
+    }
+
+    /**
+     * 3D 기울기·넘어짐을 한 스텝 적분한다.
+     * 책상 가장자리에 걸친 만큼 받침이 줄어 넘어지기 쉽고, 넘어지면 90도 텀블로 이어진다.
+     */
+    private fun updateDynamics(dt: Float) {
+        for (body in bodies) {
+            if (body.fallen) continue
+            val supported = !body.perched && !body.climbing && body.z < 1f
+            val edge = edgeFraction(body)
+            if (body.dyn.step(dt, surface.material, supported, edge)) {
+                // 무게중심이 받침 모서리를 넘었다 → 한 면이 바닥에 닿는 90도 텀블로 넘긴다.
+                body.tumble += 90f
+            }
+        }
+    }
+
+    /** 책상 가장자리 밖으로 지우개 중심이 나간 정도(0 ~ 1). */
+    private fun edgeFraction(body: EraserBody): Float {
+        val p = body.pos
+        val dx = maxOf(0f, -p.x, p.x - Board.WIDTH)
+        val dy = maxOf(0f, -p.y, p.y - Board.HEIGHT)
+        val d = kotlin.math.sqrt(dx * dx + dy * dy)
+        return (d / (body.radius * 2.4f)).coerceIn(0f, 1f)
     }
 
     /** 멈출 때까지(또는 시간이 다 될 때까지) 계산한다. AI 예측과 테스트에 쓴다. */
@@ -228,6 +261,9 @@ class EraserWorld(
         val outward = (attacker.pos - defender.pos).normalized()
         val approach = -attacker.vel.dot(outward)
         lastImpact = maxOf(lastImpact, approach)
+        lastStepImpact = maxOf(lastStepImpact, approach)
+        attacker.dyn.hit(approach, offset = (attacker.pos.x - defender.pos.x) / defender.radius, fromAbove = false)
+        defender.dyn.hit(approach * 0.5f, offset = 0f, fromAbove = true)
 
         when {
             approach > Board.CLIMB_MAX_SPEED -> {
@@ -269,11 +305,17 @@ class EraserWorld(
         val vn = rel.dot(normalAB)
         if (vn >= 0f) return
         lastImpact = maxOf(lastImpact, -vn)
+        lastStepImpact = maxOf(lastStepImpact, -vn)
 
         val restitution = (a.type.restitution + b.type.restitution) * 0.5f * surface.restitutionMul
         val impulse = -(1f + restitution) * vn / invSum
         a.vel = a.vel - normalAB * (impulse * invA)
         b.vel = b.vel + normalAB * (impulse * invB)
+
+        // 3D 강체: 맞은 지우개는 무게중심에서 벗어난 충격만큼 각운동량이 붙는다.
+        val hitPoint = (a.pos + normalAB * a.radius)
+        a.dyn.hit(-vn, offset = strikeOffset * 0.6f)
+        b.dyn.hit(-vn, offset = ((hitPoint.x - b.pos.x) / b.radius).coerceIn(-1f, 1f))
 
         // 스치는 회전은 상대에게도 옮겨 붙는다(맞은 쪽이 돌아간다).
         val tangent = Vec2(-normalAB.y, normalAB.x)

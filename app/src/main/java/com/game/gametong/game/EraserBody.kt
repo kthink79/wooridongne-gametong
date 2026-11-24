@@ -1,5 +1,6 @@
 package com.game.gametong.game
 
+import com.game.gametong.game.physics3d.EraserDynamics
 import kotlin.math.roundToInt
 
 /**
@@ -30,6 +31,23 @@ data class EraserBody(
     var perchedOn: Side? = null,
     var overlap: Float = 0f,
 ) {
+    /**
+     * 3D 기울기 동역학. 관성 모멘트·각운동량으로 모서리 걸림과 넘어짐을 계산한다.
+     * (규칙 판정은 기존 [lean] 을 쓰고, 이 값은 자세·연출에 더해진다.)
+     */
+    val dyn: EraserDynamics = EraserDynamics(
+        halfWidth = type.radius,
+        halfHeight = type.thickness * 0.5f,
+        halfDepth = type.radius * 0.78f,
+        mass = type.mass,
+    )
+
+    /** 강체가 앞뒤로 기운 각(도). */
+    val pitchDeg: Float get() = dyn.pitch
+
+    /** 강체가 옆으로 기운 각(도). */
+    val rollDeg: Float get() = dyn.roll
+
     val radius: Float get() = type.radius
     val mass: Float get() = type.mass
     val speed: Float get() = vel.length()
@@ -63,6 +81,7 @@ data class EraserBody(
         lean = 0f
         perchedOn = null
         overlap = 0f
+        dyn.reset()
     }
 
     fun isResting(): Boolean = fallen || vel.length() <= 1e-3f || (perched && vel.length() <= Board.REST_SPEED)

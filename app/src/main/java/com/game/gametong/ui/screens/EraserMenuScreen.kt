@@ -313,4 +313,6 @@ fun surfaceAccent(type: DeskSurface): Color = when (type) {
     DeskSurface.WOOD -> Inks.WoodLight
     DeskSurface.PLYWOOD -> Inks.Orange
     DeskSurface.DUSTY -> Inks.Purple
+    DeskSurface.PLASTIC -> Inks.Green
+    DeskSurface.STEEL -> Inks.SoftInk
 }

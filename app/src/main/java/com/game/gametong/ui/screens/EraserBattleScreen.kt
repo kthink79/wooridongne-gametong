@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,13 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -64,24 +59,34 @@ import com.game.gametong.game.Side
 import com.game.gametong.game.TurnOutcome
 import com.game.gametong.game.Vec2
 import com.game.gametong.game.WrestlingMatch
+import com.game.gametong.game.physics3d.FixedTimestep
+import com.game.gametong.game.physics3d.ParticleKind
+import com.game.gametong.game.physics3d.ParticleSystem
+import com.game.gametong.render.EraserAim
+import com.game.gametong.render.EraserScene3D
+import com.game.gametong.render.Game3DView
+import com.game.gametong.render.ParticleKindView
+import com.game.gametong.render.ParticleView
+import com.game.gametong.render.SceneChannel
 import com.game.gametong.ui.EraserMode
-import com.game.gametong.ui.components.BlockPose
-import com.game.gametong.ui.components.FunButton
+import com.game.gametong.ui.components.BarHint
+import com.game.gametong.ui.components.BarLabel
 import com.game.gametong.ui.components.PaperCard
-import com.game.gametong.ui.components.SelectChip
-import com.game.gametong.ui.components.drawBlock
-import com.game.gametong.ui.components.drawBlockShadow
-import com.game.gametong.ui.components.drawTopFaceBand
-import com.game.gametong.ui.components.topFacePoint
+import com.game.gametong.ui.components.PowerMeter
+import com.game.gametong.ui.components.ScreenHeader
+import com.game.gametong.ui.components.WalnutBar
+import com.game.gametong.ui.components.WoodKnob
 import com.game.gametong.ui.theme.Inks
 import kotlinx.coroutines.delay
 import kotlin.math.abs
-import kotlin.math.atan2
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private val PlayerBodyColor = Color(0xFF3D6FC0)
-private val AiBodyColor = Color(0xFFCB4B40)
+private val PlayerBodyColor = Color(0xFFC7322A)
+private val AiBodyColor = Color(0xFF1F3F9E)
+
+/** 3D 무대의 화면 비율(세로 2:3). */
+private const val BOARD_ASPECT = 2f / 3f
 
 @Composable
 fun EraserBattleScreen(
@@ -118,6 +123,11 @@ fun EraserBattleScreen(
     var strikeOffset by remember(match) { mutableStateOf(0f) }
     var touchOffset by remember(match) { mutableStateOf<Float?>(null) }
 
+    // ── 3D 렌더링·물리 자원 ──
+    val channel = remember(match) { SceneChannel() }
+    val particles = remember(match) { ParticleSystem(capacity = 220) }
+    val fixed = remember(match) { FixedTimestep(step = 1f / 120f, maxSteps = 6) }
+
     val countScale by animateFloatAsState(
         targetValue = if (countFlash != null) 1f else 0f,
         animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
@@ -132,15 +142,38 @@ fun EraserBattleScreen(
         winnerNow = match.winner
     }
 
+    /** 충돌한 자리(두 지우개 사이)에 가루를 뿌린다. */
+    fun burstAtContact(impact: Float) {
+        if (impact <= 0f) return
+        val world = match.world
+        val a = world.player.pos
+        val b = world.opponent.pos
+        val mx = (a.x + b.x) * 0.5f
+        val my = (a.y + b.y) * 0.5f
+        particles.spawnCrumbs(mx, my, z = 18f, impact = impact, count = (4 + impact / 160f).toInt())
+        if (impact > 260f) particles.spawnDust(mx, my, z = 4f, power = (impact / 700f), count = 6)
+    }
+
+    // 물리: 고정 타임스텝(120Hz)으로 계산한다. 화면 주사율과 무관하게 같은 결과가 나온다.
     LaunchedEffect(match, moveCount) {
+        var lastNanos = 0L
         while (true) {
             when {
                 match.phase == MatchPhase.MOVING -> {
-                    withFrameNanos { }
-                    repeat(2) { match.world.step() }
+                    val now = withFrameNanos { it }
+                    val dt = if (lastNanos == 0L) {
+                        1f / 60f
+                    } else {
+                        ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+                    }
+                    lastNanos = now
+                    fixed.advance(dt) { stepDt ->
+                        match.world.step(stepDt)
+                        particles.update(stepDt)
+                        burstAtContact(match.world.lastStepImpact)
+                    }
                     frame++
                     if (match.world.settled) {
-                        // 멈추면 놓인 면이 반듯해진다
                         match.world.player.snapTumble()
                         match.world.opponent.snapTumble()
                         when (match) {
@@ -168,6 +201,8 @@ fun EraserBattleScreen(
                         }
                         if (haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         syncHud()
+                        lastNanos = 0L
+                        fixed.reset()
                     }
                 }
 
@@ -216,24 +251,69 @@ fun EraserBattleScreen(
         }
     }
 
+    // 그리기: 매 프레임 장면을 새로 만들어 GL 뷰에 넘긴다.
+    LaunchedEffect(match) {
+        var startNanos = 0L
+        while (true) {
+            val now = withFrameNanos { it }
+            if (startNanos == 0L) startNanos = now
+            val seconds = (now - startNanos) / 1_000_000_000f
+            val attackerBody = match.world.bodyOf(match.turn)
+            val aim = dragStart?.let { start ->
+                val vec = start - dragNow
+                if (vec.length() < 8f) {
+                    null
+                } else {
+                    val predicted = if (aimAssist && vec.length() > 40f) {
+                        val v = Flick.velocityFromDrag(vec, attackerBody.type)
+                        if (v.length() > 60f) {
+                            EraserAi.predictRest(match.world, match.turn, v, strikeOffset)
+                        } else {
+                            null
+                        }
+                    } else {
+                        null
+                    }
+                    EraserAim(
+                        from = attackerBody.pos,
+                        to = attackerBody.pos + vec,
+                        power = Flick.powerOf(vec),
+                        predicted = predicted,
+                    )
+                }
+            }
+            channel.scene = EraserScene3D.build(
+                bodies = match.world.bodies,
+                activeSide = match.turn,
+                surface = surface,
+                aim = aim,
+                particles = particles.particles.map {
+                    ParticleView(
+                        x = it.x,
+                        y = it.y,
+                        z = it.z,
+                        size = it.size,
+                        alpha = it.alpha,
+                        kind = when (it.kind) {
+                            ParticleKind.CRUMB -> ParticleKindView.CRUMB
+                            ParticleKind.DUST -> ParticleKindView.DUST
+                            ParticleKind.CHALK -> ParticleKindView.CHALK
+                            ParticleKind.SPARK -> ParticleKindView.SPARK
+                        },
+                    )
+                },
+                aspect = BOARD_ASPECT,
+                timeSeconds = seconds,
+                perchedSide = match.world.bodies.firstOrNull { it.perched }?.side,
+            )
+        }
+    }
+
     val canAim = phaseNow == MatchPhase.AIMING && (turnNow == Side.PLAYER || twoPlayer)
     val attacker: EraserBody = match.world.bodyOf(turnNow)
 
     val dragVector: Vec2? = dragStart?.let { it - dragNow }
     val power = dragVector?.let { Flick.powerOf(it) } ?: 0f
-
-    val dragKey: Vec2? = dragVector?.let {
-        Vec2((it.x / 60f).roundToInt().toFloat(), (it.y / 60f).roundToInt().toFloat())
-    }
-    val prediction: Vec2? = remember(dragKey, canAim, aimAssist, match, strikeOffset) {
-        val vec = dragVector
-        if (aimAssist && canAim && vec != null && vec.length() > 40f) {
-            val v = Flick.velocityFromDrag(vec, attacker.type)
-            if (v.length() > 60f) EraserAi.predictRest(match.world, match.turn, v, strikeOffset) else null
-        } else {
-            null
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -254,43 +334,56 @@ fun EraserBattleScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                val boardWidth = min(maxWidth.value, maxHeight.value * (2f / 3f))
+                val boardWidth = min(maxWidth.value, maxHeight.value * BOARD_ASPECT)
                 Box(
                     modifier = Modifier
                         .width(boardWidth.dp)
-                        .height((boardWidth * 1.5f).dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(deskBase(surface))
-                        .border(3.dp, Inks.Wood, RoundedCornerShape(14.dp))
-                        .pointerInput(canAim, match, boardWidth, turnNow) {
+                        .height((boardWidth / BOARD_ASPECT).dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF2A1C10))
+                        .border(3.dp, Inks.Wood, RoundedCornerShape(16.dp))
+                        .pointerInput(canAim, match, turnNow) {
                             detectDragGestures(
                                 onDragStart = { offset ->
                                     if (canAim) {
-                                        val scale = size.width / Board.WIDTH
-                                        val start = Vec2(offset.x / scale, offset.y / scale)
-                                        dragStart = start
-                                        dragNow = start
-                                        // 손가락이 지우개에 닿은 지점이 곧 때리는 지점이 된다.
-                                        val body = match.world.bodyOf(match.turn)
-                                        val dx = start.x - body.pos.x
-                                        val dy = start.y - body.pos.y
-                                        val reach = body.radius * 1.5f
-                                        if (dx * dx + dy * dy <= reach * reach) {
-                                            val off = (dx / body.radius).coerceIn(-1f, 1f)
-                                            strikeOffset = (off * 10f).roundToInt() / 10f
-                                            touchOffset = off
-                                        } else {
-                                            touchOffset = null
+                                        val w = size.width.toFloat().coerceAtLeast(1f)
+                                        val h = size.height.toFloat().coerceAtLeast(1f)
+                                        val start = EraserScene3D.fieldPoint(
+                                            offset.x / w,
+                                            offset.y / h,
+                                            BOARD_ASPECT,
+                                        )
+                                        if (start != null) {
+                                            dragStart = start
+                                            dragNow = start
+                                            // 손가락이 지우개에 닿은 지점이 곧 때리는 지점이 된다.
+                                            val body = match.world.bodyOf(match.turn)
+                                            val dx = start.x - body.pos.x
+                                            val dy = start.y - body.pos.y
+                                            val reach = body.radius * 1.8f
+                                            if (dx * dx + dy * dy <= reach * reach) {
+                                                val off = (dx / body.radius).coerceIn(-1f, 1f)
+                                                strikeOffset = (off * 10f).roundToInt() / 10f
+                                                touchOffset = off
+                                            } else {
+                                                touchOffset = null
+                                            }
                                         }
                                     }
                                 },
                                 onDrag = { change, _ ->
                                     if (canAim && dragStart != null) {
-                                        val scale = size.width / Board.WIDTH
-                                        dragNow = Vec2(change.position.x / scale, change.position.y / scale)
+                                        val w = size.width.toFloat().coerceAtLeast(1f)
+                                        val h = size.height.toFloat().coerceAtLeast(1f)
+                                        val point = EraserScene3D.fieldPoint(
+                                            change.position.x / w,
+                                            change.position.y / h,
+                                            BOARD_ASPECT,
+                                        )
+                                        if (point != null) dragNow = point
                                         change.consume()
                                     }
                                 },
@@ -316,16 +409,9 @@ fun EraserBattleScreen(
                                     touchOffset = null
                                 },
                             )
-                        }
+                        },
                 ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        frame
-                        drawDesk(surface)
-                        drawErasers(match, turnNow, strikeOffset, touchOffset)
-                        dragStart?.let { start ->
-                            drawAim(start, dragNow, attacker, prediction)
-                        }
-                    }
+                    Game3DView(channel = channel, modifier = Modifier.fillMaxSize())
 
                     if (countFlash != null) {
                         Box(
@@ -400,26 +486,26 @@ private fun BattleHud(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .background(Inks.Paper)
                 .border(3.dp, Inks.Wood, CircleShape)
                 .clickable(onClick = onExit),
             contentAlignment = Alignment.Center,
         ) {
-            Text("←", fontSize = 19.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
+            Text("←", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Inks.Wood)
         }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = mode.title,
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Black,
                 color = Inks.Wood,
             )
@@ -429,7 +515,7 @@ private fun BattleHud(
                     is AlkkaegiMatch -> "${match.round}라운드 · 3판 2선승 · ${surface.label}"
                     else -> ""
                 },
-                fontSize = 10.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = Inks.SoftInk,
             )
@@ -443,25 +529,20 @@ private fun BattleHud(
                         is AlkkaegiMatch -> "${match.playerRounds} : ${match.aiRounds}"
                         else -> ""
                     },
-                    fontSize = 20.sp,
+                    fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     color = Inks.Ink,
                 )
                 Spacer(Modifier.width(8.dp))
-                SideDot(if (turnNow == Side.PLAYER) PlayerBodyColor else AiBodyColor)
+                Box(
+                    modifier = Modifier
+                        .size(13.dp)
+                        .clip(CircleShape)
+                        .background(if (turnNow == Side.PLAYER) PlayerBodyColor else AiBodyColor)
+                )
             }
         }
     }
-}
-
-@Composable
-private fun SideDot(color: Color) {
-    Box(
-        modifier = Modifier
-            .size(12.dp)
-            .clip(CircleShape)
-            .background(color)
-    )
 }
 
 @Composable
@@ -481,68 +562,43 @@ private fun BattleFooter(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
             text = when {
-                canAim && turnNow == Side.PLAYER -> "내 차례 — 내 지우개를 뒤로 당겼다 놓으세요"
+                canAim && turnNow == Side.PLAYER -> "내 차례 — 지우개를 뒤로 당겼다 놓으세요"
                 canAim && twoPlayer -> "2P 차례 — 기기를 넘겨받고 당겼다 놓으세요"
                 else -> "상대가 겨냥하는 중…"
             },
-            fontSize = 14.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Black,
             color = Inks.Wood,
         )
-        Spacer(Modifier.height(5.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "때리는 지점",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = Inks.SoftInk,
-                modifier = Modifier.width(62.dp),
-            )
-            SelectChip("왼끝", strikeOffset < -0.25f, Inks.Purple, Modifier.weight(1f)) { onStrikeOffset(-0.8f) }
-            Spacer(Modifier.width(4.dp))
-            SelectChip("가운데", abs(strikeOffset) <= 0.25f, Inks.Purple, Modifier.weight(1f)) { onStrikeOffset(0f) }
-            Spacer(Modifier.width(4.dp))
-            SelectChip("오른끝", strikeOffset > 0.25f, Inks.Purple, Modifier.weight(1f)) { onStrikeOffset(0.8f) }
-        }
         Spacer(Modifier.height(6.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(16.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Inks.Wood.copy(alpha = 0.18f))
-                .border(2.dp, Inks.Wood, RoundedCornerShape(8.dp))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(power.coerceIn(0f, 1f))
-                    .height(16.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Inks.Green, Inks.Gold, Inks.Red)
-                        )
-                    )
-            )
+        WalnutBar(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                PowerMeter(
+                    value = power,
+                    modifier = Modifier.fillMaxWidth(),
+                    caption = if (power > 0.01f) "힘 ${(power * 100).toInt()}%" else "당길수록 세게 날아갑니다",
+                )
+            }
+            WoodKnob("왼끝", strikeOffset < -0.25f) { onStrikeOffset(-0.8f) }
+            WoodKnob("가운데", abs(strikeOffset) <= 0.25f) { onStrikeOffset(0f) }
+            WoodKnob("오른끝", strikeOffset > 0.25f) { onStrikeOffset(0.8f) }
         }
         Spacer(Modifier.height(5.dp))
-        Text(
-            text = when {
+        BarLabel(
+            when {
                 lastOutcome == TurnOutcome.PIN -> lastPinInfo ?: "걸쳐 앉았다! 카운트!"
                 lastOutcome == TurnOutcome.SLIP -> lastPinInfo ?: "비스듬히 걸쳐만 있었다 — 빠져나왔다"
                 lastOutcome == TurnOutcome.FELL -> "링아웃 — 지우개가 책상 밖으로 떨어졌다"
                 mode == EraserMode.WRESTLING ->
-                    "${surface.hint} · 끝을 때리면 회전이 붙는다. 걸쳐 앉으면 1카운트"
+                    "${surface.hint} · 걸쳐 앉으면 1카운트"
                 else ->
-                    "${surface.hint} · 끝을 때리면 휘어 들어간다. 상대를 책상 밖으로!"
+                    "${surface.hint} · 상대를 책상 밖으로!"
             },
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = Inks.SoftInk,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -582,7 +638,7 @@ private fun CountBadge(match: DuelMatch, pinInfo: String?) {
                 text = (if (side == Side.PLAYER) "내 지우개가 걸쳐 올라갔다" else "상대가 걸쳐 올라갔다") +
                     (pinInfo?.let { " · $it" } ?: ""),
                 color = Inks.White,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
             )
@@ -644,316 +700,18 @@ private fun ResultOverlay(
                     textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(16.dp))
-                FunButton(
+                com.game.gametong.ui.components.FunButton(
                     text = "다시 하기",
                     modifier = Modifier.fillMaxWidth(),
                     color = Inks.Green,
                 ) { onRetry() }
                 Spacer(Modifier.height(8.dp))
-                FunButton(
+                com.game.gametong.ui.components.FunButton(
                     text = "나가기",
                     modifier = Modifier.fillMaxWidth(),
                     color = Inks.WoodLight,
                 ) { onExit() }
             }
         }
-    }
-}
-
-// ── 캔버스 그리기 ─────────────────────────────────────────────
-
-private fun deskBase(surface: DeskSurface): Color = when (surface) {
-    DeskSurface.COATED -> Color(0xFFEFE6D2)
-    DeskSurface.WOOD -> Color(0xFFE9D3A8)
-    DeskSurface.PLYWOOD -> Color(0xFFD9C093)
-    DeskSurface.DUSTY -> Color(0xFFD6C8AC)
-}
-
-private fun DrawScope.drawDesk(surface: DeskSurface) {
-    val scale = size.width / Board.WIDTH
-    val frameWidth = 12f * scale
-    drawRect(Inks.Wood)
-    drawRect(
-        color = deskBase(surface),
-        topLeft = Offset(frameWidth, frameWidth),
-        size = Size(size.width - frameWidth * 2, size.height - frameWidth * 2),
-    )
-    // 연필로 그린 격자 느낌
-    val grid = 100f * scale
-    val gridAlpha = if (surface == DeskSurface.DUSTY) 0.05f else 0.08f
-    var x = grid
-    while (x < size.width) {
-        drawLine(
-            color = Inks.Wood.copy(alpha = gridAlpha),
-            start = Offset(x, frameWidth),
-            end = Offset(x, size.height - frameWidth),
-            strokeWidth = 1.2f,
-        )
-        x += grid
-    }
-    var y = grid
-    while (y < size.height) {
-        drawLine(
-            color = Inks.Wood.copy(alpha = gridAlpha),
-            start = Offset(frameWidth, y),
-            end = Offset(size.width - frameWidth, y),
-            strokeWidth = 1.2f,
-        )
-        y += grid
-    }
-
-    when (surface) {
-        DeskSurface.COATED -> {
-            // 반짝이는 코팅: 비스듬한 빛무리 + 옅은 반사
-            drawRect(
-                brush = Brush.linearGradient(
-                    listOf(Color.White.copy(alpha = 0.35f), Color.Transparent, Color.White.copy(alpha = 0.18f)),
-                    start = Offset(0f, 0f),
-                    end = Offset(size.width, size.height),
-                ),
-                topLeft = Offset(frameWidth, frameWidth),
-                size = Size(size.width - frameWidth * 2, size.height - frameWidth * 2),
-            )
-        }
-        DeskSurface.WOOD -> {
-            // 나뭇결
-            var line = 0
-            while (line < 22) {
-                val ly = (line * 47f + 18f) * scale
-                drawLine(
-                    color = Color(0xFF8A6234).copy(alpha = 0.20f),
-                    start = Offset(frameWidth, ly),
-                    end = Offset(size.width - frameWidth, ly + 6f * scale),
-                    strokeWidth = (1f + (line % 3)).toFloat(),
-                )
-                line++
-            }
-        }
-        DeskSurface.PLYWOOD -> {
-            // 거친 결 + 긁힌 자국
-            var i = 0
-            while (i < 120) {
-                val px = ((i * 79) % 1000) * scale
-                val py = ((i * 41) % 1500) * scale
-                drawLine(
-                    color = Color(0xFF7A5A30).copy(alpha = 0.18f),
-                    start = Offset(px, py),
-                    end = Offset(px + (18f + i % 30) * scale, py + (6f - i % 12) * scale),
-                    strokeWidth = 1.4f,
-                )
-                i++
-            }
-        }
-        DeskSurface.DUSTY -> {
-            var i = 0
-            while (i < 260) {
-                val px = ((i * 61) % 1000) * scale
-                val py = ((i * 97) % 1500) * scale
-                drawCircle(
-                    color = Color(0xFFB9A88A).copy(alpha = 0.30f),
-                    radius = (1f + (i % 3)) * scale,
-                    center = Offset(px, py),
-                )
-                i++
-            }
-        }
-    }
-
-    // 중앙 표시
-    drawCircle(
-        color = Inks.Wood.copy(alpha = 0.10f),
-        radius = 60f * scale,
-        center = Offset(size.width / 2f, size.height / 2f),
-        style = Stroke(width = 2f),
-    )
-    drawLine(
-        color = Inks.Red.copy(alpha = 0.25f),
-        start = Offset(size.width / 2f - 18f * scale, size.height / 2f),
-        end = Offset(size.width / 2f + 18f * scale, size.height / 2f),
-        strokeWidth = 2f,
-    )
-    drawLine(
-        color = Inks.Red.copy(alpha = 0.25f),
-        start = Offset(size.width / 2f, size.height / 2f - 18f * scale),
-        end = Offset(size.width / 2f, size.height / 2f + 18f * scale),
-        strokeWidth = 2f,
-    )
-}
-
-/** 지우개 블록의 화면 자세. 이동 거리만큼 넘어가며 구르고, 걸쳐 올라가면 그 높이만큼 뜬다. */
-private fun eraserBlockPose(body: EraserBody, scale: Float): BlockPose {
-    val width = body.blockWidth * scale
-    val height = body.blockHeight * scale
-    val axisDeg = Math.toDegrees(
-        atan2(body.tumbleAxis.y.toDouble(), body.tumbleAxis.x.toDouble())
-    ).toFloat()
-    return BlockPose(
-        cx = body.pos.x * scale,
-        cy = body.pos.y * scale,
-        width = width,
-        depth = body.blockDepth * scale,
-        height = height,
-        yawDeg = body.spin,
-        tiltDeg = body.tumble,
-        tiltAxisDeg = axisDeg,
-        rollDeg = body.lean,
-        lift = body.z * scale,
-    )
-}
-
-private fun DrawScope.drawErasers(
-    match: DuelMatch,
-    turnNow: Side,
-    strikeOffset: Float,
-    touchOffset: Float?,
-) {
-    val attacker = match.world.bodyOf(turnNow)
-    val defender = match.world.bodyOf(turnNow.other())
-    // 걸쳐 올라간 지우개를 위에 그린다
-    val order = if (attacker.perched || attacker.z >= defender.z) {
-        listOf(defender, attacker)
-    } else {
-        listOf(attacker, defender)
-    }
-    for (body in order) {
-        if (body.fallen) continue
-        drawOneEraser(
-            body = body,
-            color = if (body.side == Side.PLAYER) PlayerBodyColor else AiBodyColor,
-            active = body === attacker && (match.phase == MatchPhase.AIMING || match.phase == MatchPhase.MOVING),
-            strikeOffset = if (body === attacker && match.phase == MatchPhase.AIMING) strikeOffset else null,
-            touchOffset = if (body === attacker) touchOffset else null,
-        )
-    }
-}
-
-private fun DrawScope.drawOneEraser(
-    body: EraserBody,
-    color: Color,
-    active: Boolean,
-    strikeOffset: Float?,
-    touchOffset: Float?,
-) {
-    val scale = size.width / Board.WIDTH
-    val pose = eraserBlockPose(body, scale)
-    val cx = pose.cx
-    val cy = pose.cy
-
-    if (active) {
-        drawCircle(
-            color = Inks.White.copy(alpha = 0.75f),
-            radius = body.radius * scale + 9f,
-            center = Offset(cx, cy),
-            style = Stroke(width = 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 9f))),
-        )
-    }
-
-    // 바닥 그림자를 먼저 깔고 그 위에 블록을 그린다(걸쳐 있을 때는 상대 위에 떨어진다).
-    drawBlockShadow(pose, alpha = if (body.perched) 0.26f else 0.20f)
-    drawBlock(
-        pose = pose,
-        topFaceColor = color.copy(alpha = 0.96f),
-        sideColor = color.copy(alpha = 0.72f),
-        borderColor = Inks.Wood,
-        borderWidth = 3f,
-        shadow = false,
-    )
-    // 종이 라벨(윗면 띠) + 글자 느낌의 얇은 선
-    drawTopFaceBand(pose, -0.26f, 0.26f, Color(0xFFFFF7E6))
-    drawTopFaceBand(pose, 0.26f, 0.30f, color.copy(alpha = 0.55f))
-    val lineColor = Inks.SoftInk.copy(alpha = 0.55f)
-    for (v in listOf(-0.14f, -0.02f, 0.10f)) {
-        val a = topFacePoint(pose, -0.26f, v)
-        val b = topFacePoint(pose, 0.18f, v)
-        drawLine(lineColor, a, b, strokeWidth = 2.4f)
-    }
-
-    // 때리는 지점 표시(내 지우개에 잠깐 나타나는 표적)
-    val marker = touchOffset ?: strikeOffset
-    if (marker != null && active) {
-        val p = topFacePoint(pose, marker.coerceIn(-0.48f, 0.48f), 0.34f)
-        drawCircle(
-            color = if (touchOffset != null) Inks.Red else Inks.Gold,
-            radius = 8f,
-            center = p,
-            style = Stroke(width = 3f),
-        )
-        drawCircle(
-            color = Inks.White.copy(alpha = 0.8f),
-            radius = 2.5f,
-            center = p,
-        )
-    }
-
-    // 걸쳐 올라간 지우개에 작은 표시
-    if (body.perched) {
-        val p = topFacePoint(pose, 0f, -0.36f)
-        drawCircle(Inks.Gold, radius = 5f, center = p)
-    }
-}
-
-private fun DrawScope.drawAim(start: Vec2, now: Vec2, attacker: EraserBody, prediction: Vec2?) {
-    val scale = size.width / Board.WIDTH
-    val vec = start - now
-    if (vec.length() < 6f) return
-    val power = (vec.length() / Board.MAX_DRAG).coerceIn(0f, 1f)
-    val dir = vec.normalized()
-    val from = Offset(attacker.pos.x * scale, attacker.pos.y * scale)
-    val length = (min(vec.length(), Board.MAX_DRAG)) * scale
-    val to = Offset(from.x + dir.x * length, from.y + dir.y * length)
-
-    drawLine(
-        color = Inks.Red.copy(alpha = 0.85f),
-        start = from,
-        end = to,
-        strokeWidth = 6f,
-        cap = androidx.compose.ui.graphics.StrokeCap.Round,
-        pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 10f)),
-    )
-
-    val head = 20f
-    val left = Offset(
-        to.x - dir.x * head - dir.y * head * 0.55f,
-        to.y - dir.y * head + dir.x * head * 0.55f,
-    )
-    val right = Offset(
-        to.x - dir.x * head + dir.y * head * 0.55f,
-        to.y - dir.y * head - dir.x * head * 0.55f,
-    )
-    val path = androidx.compose.ui.graphics.Path().apply {
-        moveTo(to.x, to.y)
-        lineTo(left.x, left.y)
-        lineTo(right.x, right.y)
-        close()
-    }
-    drawPath(path, Inks.Red)
-
-    val barW = 220f
-    val barX = from.x - barW / 2f
-    val barY = from.y + attacker.radius * scale + 18f
-    drawRoundRect(
-        color = Inks.Wood.copy(alpha = 0.35f),
-        topLeft = Offset(barX, barY),
-        size = Size(barW, 14f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f),
-    )
-    drawRoundRect(
-        color = when {
-            power > 0.85f -> Inks.Red
-            power > 0.55f -> Inks.Gold
-            else -> Inks.Green
-        },
-        topLeft = Offset(barX, barY),
-        size = Size(barW * power, 14f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f),
-    )
-
-    if (prediction != null && prediction.x >= 0f) {
-        drawCircle(
-            color = Inks.Blue.copy(alpha = 0.85f),
-            radius = attacker.radius * scale * 0.55f,
-            center = Offset(prediction.x * scale, prediction.y * scale),
-            style = Stroke(width = 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))),
-        )
     }
 }

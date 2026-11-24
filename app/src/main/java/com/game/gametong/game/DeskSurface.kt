@@ -1,5 +1,7 @@
 package com.game.gametong.game
 
+import com.game.gametong.game.physics3d.DeskMaterial
+
 /**
  * 책상 표면의 상태. 같은 세기로 튕겨도 표면에 따라 미끄러지는 거리·회전이 오래 도는 정도·
  * 튕김이 달라진다.
@@ -16,6 +18,8 @@ enum class DeskSurface(
     val spinDecayMul: Float,
     val restitutionMul: Float,
     val curveMul: Float,
+    /** 3D 강체 물리에서 쓰는 바닥 재질(마찰계수·반발계수). */
+    val material: DeskMaterial,
 ) {
     COATED(
         label = "매끈한 코팅 책상",
@@ -24,6 +28,7 @@ enum class DeskSurface(
         spinDecayMul = 0.55f,
         restitutionMul = 1.10f,
         curveMul = 1.45f,
+        material = DeskMaterial.VARNISHED_WOOD,
     ),
     WOOD(
         label = "나무 책상",
@@ -32,6 +37,7 @@ enum class DeskSurface(
         spinDecayMul = 1.0f,
         restitutionMul = 1.0f,
         curveMul = 1.0f,
+        material = DeskMaterial.RAW_WOOD,
     ),
     PLYWOOD(
         label = "거친 합판",
@@ -40,6 +46,7 @@ enum class DeskSurface(
         spinDecayMul = 1.8f,
         restitutionMul = 0.85f,
         curveMul = 0.7f,
+        material = DeskMaterial.PLYWOOD,
     ),
     DUSTY(
         label = "먼지 쌓인 책상",
@@ -48,6 +55,25 @@ enum class DeskSurface(
         spinDecayMul = 2.4f,
         restitutionMul = 0.55f,
         curveMul = 0.55f,
+        material = DeskMaterial.DUSTY,
+    ),
+    PLASTIC(
+        label = "플라스틱 책상",
+        hint = "반들반들한 플라스틱 — 잘 미끄러지고 탄성도 있다",
+        frictionMul = 0.55f,
+        spinDecayMul = 0.65f,
+        restitutionMul = 1.20f,
+        curveMul = 1.3f,
+        material = DeskMaterial.PLASTIC,
+    ),
+    STEEL(
+        label = "철제 책상",
+        hint = "차가운 철판 — 가장 잘 미끄러지고 회전이 오래 돈다",
+        frictionMul = 0.42f,
+        spinDecayMul = 0.5f,
+        restitutionMul = 1.15f,
+        curveMul = 1.5f,
+        material = DeskMaterial.STEEL,
     );
 
     companion object {
