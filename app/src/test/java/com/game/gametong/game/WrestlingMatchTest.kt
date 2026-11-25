@@ -140,7 +140,8 @@ class WrestlingMatchTest {
         m.settleFlick()
         m.applyCount()
         assertEquals(Side.AI, m.turn)
-        m.flick(Vec2(0f, 400f))
+        // 상대가 닿지 않게만 밀면 차례가 돌아온다.
+        m.flick(Vec2(0f, 180f))
         m.world.settle()
         m.settleFlick()
         assertEquals(Side.PLAYER, m.turn)
@@ -172,7 +173,8 @@ class WrestlingMatchTest {
     @Test
     fun `비스듬히 걸쳐만 있으면 빠져나와 카운트가 안 된다`() {
         val m = match()
-        m.flick(Vec2(0f, -800f))
+        // 가장자리에 겨우 걸칠 만큼만 세게: 무게중심이 윗면 밖이라 핀이 아니다.
+        m.flick(Vec2(0f, -640f))
         m.world.settle()
         assertEquals(Side.AI, m.world.player.perchedOn)
         assertEquals(TurnOutcome.SLIP, m.settleFlick())
@@ -186,11 +188,63 @@ class WrestlingMatchTest {
     @Test
     fun `빠져나온 뒤에도 두 지우개는 지금 자리에서 이어진다`() {
         val m = match()
-        m.flick(Vec2(0f, -800f))
+        m.flick(Vec2(0f, -640f))
         m.world.settle()
         m.settleFlick()
         assertTrue(m.world.player.pos != WrestlingMatch.PLAYER_HOME)
         assertEquals(Side.AI, m.turn)
+    }
+
+    // ── 실기 피드백: "위로 올라갔는데 빠져 나왔다며 비정상적으로 떨어진다" ─────────
+
+    @Test
+    fun `확실히 올라타면 빠져나왔다고 하지 않고 카운트로 인정한다`() {
+        val m = match()
+        m.flick(Vec2(0f, -900f))
+        m.world.settle()
+        val attacker = m.world.bodyOf(Side.PLAYER)
+        val defender = m.world.bodyOf(Side.AI)
+        assertEquals("상대 위에 있어야 한다", Side.AI, attacker.perchedOn)
+        val ratio = attacker.pos.distanceTo(defender.pos) / defender.radius
+        assertTrue("무게중심이 윗면 안: $ratio", ratio < 0.95f)
+        assertTrue("기운 각 ${attacker.lean}", attacker.lean <= Board.PIN_MAX_LEAN)
+        assertEquals(TurnOutcome.PIN, m.settleFlick())
+        assertEquals(Side.PLAYER, m.countSide)
+    }
+
+    @Test
+    fun `올라탄 지우개는 상대 높이에 떠 있고 아래로 꺼지지 않는다`() {
+        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        val attacker = m.world.player
+        val defender = m.world.opponent
+        assertTrue("높이 ${attacker.z} (상대 두께 ${defender.blockHeight})", attacker.z >= defender.blockHeight * 0.5f)
+        assertTrue(
+            "겹침 ${m.world.overlapRatio(attacker, defender)}",
+            m.world.overlapRatio(attacker, defender) >= Board.PIN_OVERLAP,
+        )
+    }
+
+    @Test
+    fun `올라탄 뒤에는 상대 위에서 데굴데굴 구르지 않는다`() {
+        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        val quarter = (m.world.player.tumble % 90f + 90f) % 90f
+        assertTrue("놓인 면이 반듯해야 한다: $quarter", quarter < 1.5f || quarter > 88.5f)
+    }
+
+    @Test
+    fun `살짝 스쳐 걸치지 못하면 그 자리에서 튕겨 나가지 않는다`() {
+        val m = match()
+        // 겨우 닿을 만큼만 민다 — 걸치지 못하고 내려온다.
+        m.flick(Vec2(0f, -630f))
+        m.world.settle()
+        if (m.world.player.perchedOn == null) {
+            val speed = m.world.player.speed
+            assertTrue("튕겨 나가지 않아야 한다: $speed", speed < 250f)
+        }
     }
 
     @Test

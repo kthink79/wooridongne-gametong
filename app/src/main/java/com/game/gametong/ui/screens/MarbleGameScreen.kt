@@ -38,14 +38,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.game.gametong.game.MarbleAim
+import com.game.gametong.game.MarbleAimPrediction
 import com.game.gametong.game.MarbleCircleGame
 import com.game.gametong.game.MarbleHoleGame
+import com.game.gametong.game.MarbleWorld
 import com.game.gametong.game.Side
 import com.game.gametong.game.Vec2
 import com.game.gametong.game.physics3d.ParticleSystem
 import com.game.gametong.render.Game3DView
 import com.game.gametong.render.GroundAim
+import com.game.gametong.render.MarbleImpactFx
 import com.game.gametong.render.MarbleScene3D
+import com.game.gametong.render.MarbleTrailDot
 import com.game.gametong.render.ParticleKindView
 import com.game.gametong.render.ParticleView
 import com.game.gametong.render.SceneChannel
@@ -77,6 +82,67 @@ fun MarbleGameScreen(
     }
 }
 
+/**
+ * 구슬이 굴러가는 잔상·충격 연출을 모아 두는 그릇.
+ * 매 프레임 장면을 새로 만들기 때문에 상태를 Compose 로 올리지 않고 여기에만 쌓는다(재구성 없음).
+ */
+private class MarbleFx {
+    val impacts = ArrayList<MarbleImpactFx>(32)
+    val trails = ArrayList<MarbleTrailDot>(96)
+
+    /** 새로 생긴 충격만 돌려준다(먼지는 그것들에만 뿌린다). */
+    fun addImpacts(world: MarbleWorld): List<MarbleImpactFx> {
+        val fresh = world.drainImpacts()
+        if (fresh.isEmpty()) return emptyList()
+        val added = ArrayList<MarbleImpactFx>(fresh.size)
+        for (imp in fresh) {
+            if (impacts.size >= 30) impacts.removeAt(0)
+            val fx = MarbleImpactFx(
+                pos = Vec2(imp.x, imp.y),
+                strength = imp.strength,
+                age = 0f,
+                life = 0.55f,
+                ringRadius = if (imp.wall) 18f else 22f + imp.strength * 0.02f,
+                seed = (imp.a * 1.7f) % 6.28f,
+            )
+            impacts += fx
+            added += fx
+        }
+        return added
+    }
+
+    fun addTrails(world: MarbleWorld, dt: Float) {
+        for (m in world.marbles) {
+            if (m.sunk) continue
+            val speed = m.vel.length()
+            if (speed < 90f) continue
+            if (trails.size >= 90) trails.removeAt(0)
+            trails += MarbleTrailDot(
+                pos = m.pos,
+                life = 1f,
+                radius = m.radius * (0.55f + 0.45f * (speed / 1200f).coerceIn(0f, 1f)),
+            )
+        }
+    }
+
+    fun age(dt: Float) {
+        var i = impacts.size - 1
+        while (i >= 0) {
+            val fx = impacts[i]
+            val next = fx.copy(age = fx.age + dt)
+            if (next.age >= next.life) impacts.removeAt(i) else impacts[i] = next
+            i--
+        }
+        i = trails.size - 1
+        while (i >= 0) {
+            val dot = trails[i]
+            val next = dot.life - dt * 2.6f
+            if (next <= 0f) trails.removeAt(i) else trails[i] = dot.copy(life = next)
+            i--
+        }
+    }
+}
+
 private fun marbleAimDeg(dir: Vec2, side: Side): Float {
     if (dir.length() < 1e-3f) return 0f
     val d = dir.normalized()
@@ -98,27 +164,58 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
     var aimDir by remember { mutableStateOf(Vec2.ZERO) }
     var aimDeg by remember { mutableStateOf(0f) }
     var thinking by remember { mutableStateOf(false) }
+    var prediction by remember { mutableStateOf<MarbleAimPrediction?>(null) }
+    var rollingNow by remember { mutableStateOf(false) }
 
     val channel = remember(game) { SceneChannel() }
-    val particles = remember(game) { ParticleSystem(capacity = 140) }
+    val particles = remember(game) { ParticleSystem(capacity = 180) }
+    val fx = remember(game) { MarbleFx() }
 
+    // 상대(AI) 차례: 잠깐 겨냥하는 척하다가 실제로 굴리기 시작한다.
     LaunchedEffect(tick, gameKey) {
-        if (!twoPlayer && !game.finished && game.turn == Side.AI) {
+        if (!twoPlayer && !game.finished && game.turn == Side.AI && !game.inFlight) {
             thinking = true
             delay(680)
-            game.aiShoot()
+            game.aiBeginShot()
             thinking = false
-            tick++
         }
     }
 
     LaunchedEffect(game) {
         var startNanos = 0L
+        var lastNanos = 0L
         while (true) {
             val now = withFrameNanos { it }
-            if (startNanos == 0L) startNanos = now
+            if (startNanos == 0L) {
+                startNanos = now
+                lastNanos = now
+            }
             val seconds = (now - startNanos) / 1_000_000_000f
-            particles.update(1f / 60f)
+            val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+            lastNanos = now
+            particles.update(dt.coerceAtLeast(1f / 240f))
+            if (game.inFlight) {
+                val rolling = game.advanceShot(dt)
+                for (imp in fx.addImpacts(game.world)) {
+                    particles.spawnDust(
+                        imp.pos.x, imp.pos.y,
+                        z = 0f,
+                        power = (imp.strength / 700f).coerceIn(0.18f, 1.3f),
+                        count = 3,
+                    )
+                }
+                rollingNow = rolling
+                if (!rolling) {
+                    game.finishShot()
+                    for (g in game.glasses.filter { it.sunk }) {
+                        particles.spawnDust(g.pos.x, g.pos.y, z = 0f, power = 0.6f, count = 4)
+                    }
+                    prediction = null
+                    tick++
+                }
+            }
+            fx.addTrails(game.world, dt)
+            fx.age(dt)
             channel.scene = MarbleScene3D.build(
                 marbles = listOf(game.king) + game.glasses,
                 king = game.king,
@@ -129,6 +226,7 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         from = aimFrom ?: game.king.pos,
                         dir = aimDir,
                         power = power.coerceAtLeast(0.15f),
+                        prediction = prediction,
                     )
                 } else {
                     null
@@ -139,6 +237,8 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                 aspect = MARBLE_ASPECT,
                 timeSeconds = seconds,
                 fieldHeight = 1060f,
+                impacts = fx.impacts,
+                trails = fx.trails,
             )
         }
     }
@@ -173,7 +273,8 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                 channel = channel,
                 aspect = MARBLE_ASPECT,
                 onDragStart = { ux, uy, _ ->
-                    if (!game.finished) {
+                    // 내 차례가 아니거나 구슬이 굴러가는 중에는 조준할 수 없다.
+                    if (!game.finished && !game.inFlight && (twoPlayer || game.turn == Side.PLAYER)) {
                         dragging = true
                         power = 0f
                         aimDir = Vec2.ZERO
@@ -192,32 +293,48 @@ private fun CircleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                             if (p != null && from != null) {
                                 aimDir = p - from
                                 aimDeg = marbleAimDeg(aimDir, game.turn)
+                                prediction = MarbleAim.predict(
+                                    world = game.world,
+                                    from = game.king.pos,
+                                    velocity = MarbleAim.velocity(
+                                        aimDeg,
+                                        power.coerceAtLeast(0.08f),
+                                        if (game.turn == Side.PLAYER) -1f else 1f,
+                                    ),
+                                    radius = game.king.radius,
+                                    ignoreId = game.king.id,
+                                )
                             }
                         }
                     }
                 },
                 onDragEnd = { length, _ ->
-                    if (dragging && !game.finished && length > 22f && aimDir.length() > 1e-3f) {
-                        game.shoot(
+                    if (dragging && !game.finished && !game.inFlight &&
+                        length > 22f && aimDir.length() > 1e-3f
+                    ) {
+                        // 여기서 바로 결과를 내지 않고 **실제로 굴리기 시작**만 한다.
+                        // 화면 루프가 매 프레임 조금씩 굴려 부딪힘을 보여 주고, 멈추면 정산한다.
+                        game.beginShot(
                             game.turn,
                             marbleAimDeg(aimDir, game.turn),
                             power.coerceAtLeast(0.08f),
                         )
-                        for (g in game.glasses.filter { it.sunk }) {
-                            particles.spawnDust(g.pos.x, g.pos.y, z = 0f, power = 0.5f, count = 3)
-                        }
-                        tick++
                     }
                     dragging = false
                     power = 0f
                     aimDir = Vec2.ZERO
+                    prediction = null
                 },
                 onDragCancel = {
                     dragging = false
                     power = 0f
                     aimDir = Vec2.ZERO
+                    prediction = null
                 },
-                hintText = "힘 ${(power * 100).toInt()}% · 각도 ${aimDeg.toInt()}° · 끌어서 놓기",
+                hintText = when {
+                    rollingNow -> "구슬이 굴러가는 중…"
+                    else -> "힘 ${(power * 100).toInt()}% · 각도 ${aimDeg.toInt()}° · 끌어서 놓기"
+                },
             )
         },
         controls = {
@@ -272,27 +389,61 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
     var aimDir by remember { mutableStateOf(Vec2.ZERO) }
     var aimDeg by remember { mutableStateOf(0f) }
     var thinking by remember { mutableStateOf(false) }
+    var prediction by remember { mutableStateOf<MarbleAimPrediction?>(null) }
+    var rollingNow by remember { mutableStateOf(false) }
 
     val channel = remember(game) { SceneChannel() }
-    val particles = remember(game) { ParticleSystem(capacity = 140) }
+    val particles = remember(game) { ParticleSystem(capacity = 180) }
+    val fx = remember(game) { MarbleFx() }
 
     LaunchedEffect(tick, gameKey) {
-        if (!twoPlayer && !game.finished && game.turn == Side.AI) {
+        if (!twoPlayer && !game.finished && game.turn == Side.AI && !game.inFlight) {
             thinking = true
             delay(680)
-            game.aiShoot()
+            game.aiBeginShot()
             thinking = false
-            tick++
         }
     }
 
     LaunchedEffect(game) {
         var startNanos = 0L
+        var lastNanos = 0L
         while (true) {
             val now = withFrameNanos { it }
-            if (startNanos == 0L) startNanos = now
+            if (startNanos == 0L) {
+                startNanos = now
+                lastNanos = now
+            }
             val seconds = (now - startNanos) / 1_000_000_000f
-            particles.update(1f / 60f)
+            val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+            lastNanos = now
+            particles.update(dt.coerceAtLeast(1f / 240f))
+            if (game.inFlight) {
+                val rolling = game.advanceShot(dt)
+                for (imp in fx.addImpacts(game.world)) {
+                    particles.spawnDust(
+                        imp.pos.x, imp.pos.y,
+                        z = 0f,
+                        power = (imp.strength / 700f).coerceIn(0.18f, 1.3f),
+                        count = 3,
+                    )
+                }
+                rollingNow = rolling
+                if (!rolling) {
+                    game.finishShot()
+                    val res = game.lastResult
+                    if (res?.progressed == true) {
+                        val hole = game.holes.getOrNull(res.holeIndex)
+                        if (hole != null) {
+                            particles.spawnHoleBurst(hole.x, hole.y)
+                        }
+                    }
+                    prediction = null
+                    tick++
+                }
+            }
+            fx.addTrails(game.world, dt)
+            fx.age(dt)
             channel.scene = MarbleScene3D.build(
                 marbles = listOf(game.playerMarble, game.aiMarble),
                 king = null,
@@ -304,6 +455,7 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         dir = aimDir,
                         power = power.coerceAtLeast(0.15f),
                         target = game.holes.getOrNull(game.progressOf(game.turn).coerceAtMost(2)),
+                        prediction = prediction,
                     )
                 } else {
                     null
@@ -314,6 +466,8 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                 aspect = MARBLE_ASPECT,
                 timeSeconds = seconds,
                 fieldHeight = 1080f,
+                impacts = fx.impacts,
+                trails = fx.trails,
             )
         }
     }
@@ -348,7 +502,8 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                 channel = channel,
                 aspect = MARBLE_ASPECT,
                 onDragStart = { ux, uy, _ ->
-                    if (!game.finished) {
+                    // 내 차례가 아니거나 구슬이 굴러가는 중에는 조준할 수 없다.
+                    if (!game.finished && !game.inFlight && (twoPlayer || game.turn == Side.PLAYER)) {
                         dragging = true
                         power = 0f
                         aimDir = Vec2.ZERO
@@ -368,36 +523,48 @@ private fun HoleGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                             if (p != null && from != null) {
                                 aimDir = p - from
                                 aimDeg = marbleAimDeg(aimDir, game.turn)
+                                val mine = game.marbleOf(game.turn)
+                                prediction = MarbleAim.predict(
+                                    world = game.world,
+                                    from = mine.pos,
+                                    velocity = MarbleAim.velocity(
+                                        aimDeg,
+                                        power.coerceAtLeast(0.08f),
+                                        if (game.turn == Side.PLAYER) -1f else 1f,
+                                    ),
+                                    radius = mine.radius,
+                                    ignoreId = mine.id,
+                                )
                             }
                         }
                     }
                 },
                 onDragEnd = { length, _ ->
-                    if (dragging && !game.finished && length > 22f && aimDir.length() > 1e-3f) {
-                        game.shoot(
+                    if (dragging && !game.finished && !game.inFlight &&
+                        length > 22f && aimDir.length() > 1e-3f
+                    ) {
+                        // 실제로 굴리기 시작한다 — 화면 루프가 굴리고, 구멍에 빠지는 순간을 보여 준다.
+                        game.beginShot(
                             game.turn,
                             marbleAimDeg(aimDir, game.turn),
                             power.coerceAtLeast(0.08f),
                         )
-                        val res = game.lastResult
-                        if (res?.progressed == true) {
-                            val hole = game.holes.getOrNull(res.holeIndex)
-                            if (hole != null) {
-                                particles.spawnDust(hole.x, hole.y, z = 0f, power = 1.2f, count = 8)
-                            }
-                        }
-                        tick++
                     }
                     dragging = false
                     power = 0f
                     aimDir = Vec2.ZERO
+                    prediction = null
                 },
                 onDragCancel = {
                     dragging = false
                     power = 0f
                     aimDir = Vec2.ZERO
+                    prediction = null
                 },
-                hintText = "힘 ${(power * 100).toInt()}% · 각도 ${aimDeg.toInt()}° · 끌어서 놓기",
+                hintText = when {
+                    rollingNow -> "구슬이 굴러가는 중…"
+                    else -> "힘 ${(power * 100).toInt()}% · 각도 ${aimDeg.toInt()}° · 끌어서 놓기"
+                },
             )
         },
         controls = {

@@ -87,6 +87,20 @@ class EraserDynamics(
     }
 
     /**
+     * 가장자리를 손가락으로 눌러 밀었을 때(따먹기).
+     *
+     * 뒤 가장자리([EraserPress] 의 tip > 0)를 누르면 앞 모서리를 디디고 일어서는 각운동량이 붙어
+     * 지우개가 **앞으로 젖혀지며** 상대 위로 넘어간다. 반대면 뒤집혀 젖혀진다.
+     */
+    fun press(tip: Float) {
+        val t = tip.coerceIn(-1f, 1f)
+        if (t == 0f) return
+        pitchRate += t * 165f
+        // 눌린 쪽으로 살짝 기울기도 한다.
+        rollRate += t * 12f
+    }
+
+    /**
      * 상대 지우개·책상 모서리와 부딪혔을 때.
      * [approach] 는 부딪힌 세기(무대 단위/초), [offset] 은 중심에서 벗어난 정도(-1~1),
      * [fromAbove] 는 위에서 눌렸는지(걸쳐 올라갈 때)다.

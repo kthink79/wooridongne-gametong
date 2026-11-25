@@ -55,11 +55,12 @@ class AlkkaegiMatch(
     val isPlayerTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.PLAYER
     val isAiTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.AI
 
-    override fun flick(velocity: Vec2, strikeOffset: Float) {
+    /** 알까기는 평평하게 놓고 미는 놀이라 젖힘을 주지 않는다. */
+    override fun flick(velocity: Vec2, strikeOffset: Float, tip: Float) {
         if (phase != MatchPhase.AIMING) return
         if (velocity.length() < 40f) return
         lastSlide = 0f
-        world.flick(turn, velocity, strikeOffset)
+        world.flick(turn, velocity, strikeOffset, 0f)
         phase = MatchPhase.MOVING
     }
 
@@ -108,7 +109,7 @@ class AlkkaegiMatch(
     override fun aiVelocity(accuracy: Float, strikeOffset: Float): Vec2 {
         aiThrough++
         val noisyRandom = Random(random.nextLong() xor (aiThrough * 6151L))
-        return EraserAi.choose(world, turn, AiMode.ALKKAEGI, accuracy, noisyRandom, strikeOffset)
+        return EraserAi.choose(world, turn, AiMode.ALKKAEGI, accuracy, noisyRandom, strikeOffset, tip = 0f)
     }
 
     private fun finishRound(roundWinner: Side): RoundOutcome {

@@ -254,13 +254,17 @@ object MarbleScene3D {
         Color4(0.95f, 0.95f, 0.92f), // 무색
     )
 
+    /**
+     * 당구대를 비스듬히 내려다보는 시점.
+     * 각도를 낮춰(36도) 구슬이 **굴러가는 방향과 부딪혀 튀는 방향**이 화면에서 길게 보이게 한다.
+     */
     fun camera(aspect: Float, fieldHeight: Float = 1060f): Camera = Camera.overBoard(
         center = Vec3(5f, 0f, fieldHeight * World.SCALE * 0.5f),
         width = 10.6f,
         depth = fieldHeight * World.SCALE + 0.8f,
-        pitchDeg = 42f,
+        pitchDeg = 36f,
         yawDeg = 0f,
-        fovYDeg = 46f,
+        fovYDeg = 44f,
         aspect = aspect,
         margin = 1.0f,
     )
@@ -280,6 +284,10 @@ object MarbleScene3D {
         aspect: Float = Camera.PORTRAIT_ASPECT,
         timeSeconds: Float = 0f,
         fieldHeight: Float = 1060f,
+        /** 방금 부딪힌 자리(충격 링·불티). */
+        impacts: List<MarbleImpactFx> = emptyList(),
+        /** 구슬이 지나간 자리(굴러가는 잔상). */
+        trails: List<MarbleTrailDot> = emptyList(),
     ): Scene {
         val center = Vec3(5f, 0f, fieldHeight * World.SCALE * 0.5f)
         val camera = camera(aspect, fieldHeight)
@@ -342,11 +350,14 @@ object MarbleScene3D {
                 glassColors[colorIndex++ % glassColors.size]
             }
             shadows += SceneKit.shadowForSphere(center3, radius, env.sunDir, 0.26f)
+            // 굴러간 자세를 그대로 쓴다 — 속 회오리 무늬가 진행 방향으로 돌아간다.
+            // (예전처럼 위(Y)축으로만 돌리면 제자리에서 팽이처럼 도는 것처럼 보인다.)
+            val quat = m.rollQuat
             items += ItemSpec(
                 mesh = MeshKind.SPHERE,
                 model = Mat4.trs(
                     center3,
-                    Quat.axisAngle(Vec3.UP, Math.toRadians(m.spin.toDouble()).toFloat()),
+                    quat,
                     Vec3(radius * 2f, radius * 2f, radius * 2f),
                 ),
                 color = tint,
@@ -360,8 +371,56 @@ object MarbleScene3D {
             )
         }
 
-        val sprites = ArrayList<SpriteSpec>(64)
+        val sprites = ArrayList<SpriteSpec>(96)
         if (aim != null) addGroundGuide(sprites, aim, timeSeconds, Color4(1f, 0.90f, 0.62f, 0.95f))
+
+        // 굴러가는 잔상: 빠를수록 길고 밝게 남는다.
+        for (t in trails) {
+            val a = t.life.coerceIn(0f, 1f)
+            if (a <= 0.02f) continue
+            sprites += SpriteSpec(
+                pos = Vec3(t.pos.x * World.SCALE, 0.008f, t.pos.y * World.SCALE),
+                size = t.radius * World.SCALE * (0.55f + 0.75f * a),
+                color = Color4(1f, 0.92f, 0.74f, 0.32f * a),
+                texture = TexKind.GLOW,
+                additive = true,
+            )
+        }
+
+        // 부딪힌 자리: 바닥에 번지는 충격 링 + 튀는 불티.
+        for (fx in impacts) {
+            val k = (1f - fx.age / fx.life).coerceIn(0f, 1f)
+            if (k <= 0f) continue
+            val strength = (fx.strength / 900f).coerceIn(0.18f, 1f)
+            val r = (fx.ringRadius * (1f + 0.9f * (1f - k))) * World.SCALE
+            items += ItemSpec(
+                mesh = MeshKind.RING,
+                model = Mat4.trs(
+                    Vec3(fx.pos.x * World.SCALE, 0.006f, fx.pos.y * World.SCALE),
+                    Quat.IDENTITY,
+                    Vec3(r * 2f, 1f, r * 2f),
+                ),
+                color = Color4(1f, 0.86f, 0.55f, 0.55f * k * strength),
+                unlit = true,
+            )
+            val sparks = 6
+            for (i in 0 until sparks) {
+                val angle = i * (6.2831855f / sparks) + fx.seed
+                val d = r * (0.6f + 0.9f * (1f - k))
+                sprites += SpriteSpec(
+                    pos = Vec3(
+                        fx.pos.x * World.SCALE + cos(angle) * d,
+                        0.012f + 0.10f * (1f - k) * (i % 2),
+                        fx.pos.y * World.SCALE + sin(angle) * d,
+                    ),
+                    size = 0.035f + 0.03f * strength * k,
+                    color = Color4(1f, 0.82f + 0.15f * k, 0.45f, 0.85f * k),
+                    texture = TexKind.GLOW,
+                    additive = true,
+                )
+            }
+        }
+
         for (p in particles) {
             sprites += SpriteSpec(
                 pos = Vec3(p.x * World.SCALE, p.z * World.SCALE + 0.004f, p.y * World.SCALE),
@@ -407,12 +466,41 @@ object MarbleScene3D {
     }
 }
 
-/** 바닥에 그리는 조준 가이드(점선 + 도착 링). */
+/**
+ * 바닥에 그리는 조준 가이드(점선 + 도착 링).
+ * [prediction] 이 있으면 당구대 조준선처럼 **처음 부딪힐 자리**에서 선을 끊고,
+ * 맞은 구슬이 날아갈 방향을 함께 보여 준다.
+ */
 data class GroundAim(
     val from: Vec2,
     val dir: Vec2,
     val power: Float,
     val target: Vec2? = null,
+    val prediction: com.game.gametong.game.MarbleAimPrediction? = null,
+)
+
+/** 구슬이 지나간 자리 하나(굴러가는 잔상). */
+data class MarbleTrailDot(
+    val pos: Vec2,
+    /** 0(다 사라짐) ~ 1(방금 남김). */
+    val life: Float,
+    val radius: Float,
+)
+
+/**
+ * 구슬 충격 연출 하나.
+ * @param strength 맞부딪힌 세기(무대 단위/초)
+ * @param age 지난 시간(초)
+ * @param ringRadius 바닥에 번지는 링의 기준 반지름(무대 단위)
+ * @param seed 불티가 퍼지는 각도를 조금씩 다르게 하는 값
+ */
+data class MarbleImpactFx(
+    val pos: Vec2,
+    val strength: Float,
+    val age: Float,
+    val life: Float,
+    val ringRadius: Float = 26f,
+    val seed: Float = 0f,
 )
 
 /** 점선 조준 가이드 + 도착 지점 링을 만든다. */
@@ -429,7 +517,14 @@ fun addGroundGuide(
     if (len < 1e-4f) return
     val ux = dir.x / len
     val uy = dir.y / len
-    val reach = (maxFieldLength * aim.power.coerceIn(0.15f, 1f)) * World.SCALE
+    val prediction = aim.prediction
+    // 구슬에 먼저 닿으면 그 자리에서 선을 끊는다(당구대 조준선처럼).
+    val guideLength = if (prediction != null && !prediction.wall) {
+        kotlin.math.min(maxFieldLength * aim.power.coerceIn(0.15f, 1f), prediction.distance)
+    } else {
+        maxFieldLength * aim.power.coerceIn(0.15f, 1f)
+    }
+    val reach = guideLength * World.SCALE
     val spacing = 0.30f
     val count = (reach / spacing).toInt().coerceAtMost(120)
     for (i in 1..count) {
@@ -443,6 +538,44 @@ fun addGroundGuide(
             texture = TexKind.GLOW,
             additive = true,
         )
+    }
+
+    // 고스트 링(맞을 자리) + 맞은 구슬이 날아갈 방향 + 내 구슬이 꺾여 갈 방향
+    if (prediction != null) {
+        val c = prediction.contact
+        val ringR = 0.30f
+        for (i in 0 until 26) {
+            val a = i * (6.2831855f / 26f) + timeSeconds * 0.8f
+            sprites += SpriteSpec(
+                pos = Vec3(
+                    c.x * World.SCALE + cos(a) * ringR,
+                    0.013f,
+                    c.y * World.SCALE + sin(a) * ringR,
+                ),
+                size = 0.038f,
+                color = Color4(1f, 1f, 0.95f, 0.55f),
+                texture = TexKind.GLOW,
+                additive = true,
+            )
+        }
+        if (!prediction.wall && prediction.targetDir.length() > 1e-3f) {
+            val td = prediction.targetDir
+            val objectLen = 2.2f
+            for (i in 1..10) {
+                val d = i * (objectLen / 10f)
+                sprites += SpriteSpec(
+                    pos = Vec3(
+                        c.x * World.SCALE + td.x * d,
+                        0.012f,
+                        c.y * World.SCALE + td.y * d,
+                    ),
+                    size = 0.045f,
+                    color = Color4(0.65f, 0.95f, 1f, 0.30f + 0.35f * (1f - i / 11f)),
+                    texture = TexKind.GLOW,
+                    additive = true,
+                )
+            }
+        }
     }
     val target = aim.target
     if (target != null) {

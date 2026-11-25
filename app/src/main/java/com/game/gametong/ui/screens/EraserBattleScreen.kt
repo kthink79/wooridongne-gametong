@@ -7,7 +7,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -52,9 +53,11 @@ import com.game.gametong.game.DeskSurface
 import com.game.gametong.game.DuelMatch
 import com.game.gametong.game.EraserAi
 import com.game.gametong.game.EraserBody
+import com.game.gametong.game.EraserPress
+import com.game.gametong.game.EraserPush
 import com.game.gametong.game.EraserType
-import com.game.gametong.game.Flick
 import com.game.gametong.game.MatchPhase
+import com.game.gametong.game.PressTracker
 import com.game.gametong.game.Side
 import com.game.gametong.game.TurnOutcome
 import com.game.gametong.game.Vec2
@@ -117,11 +120,19 @@ fun EraserBattleScreen(
     var lastOutcome by remember(match) { mutableStateOf<TurnOutcome?>(null) }
     var lastPinInfo by remember(match) { mutableStateOf<String?>(null) }
 
-    var dragStart by remember(match) { mutableStateOf<Vec2?>(null) }
-    var dragNow by remember(match) { mutableStateOf(Vec2.ZERO) }
-    /** 내 지우개의 어느 지점을 때릴지(−1 왼끝 ~ 0 가운데 ~ 1 오른끝). */
+    /** 손가락이 지우개를 누른 자리(무대 좌표). null 이면 누르고 있지 않다. */
+    var pressPoint by remember(match) { mutableStateOf<Vec2?>(null) }
+    /** 누른 자리에서 지금까지 민 변위(조준선용). */
+    var pushVec by remember(match) { mutableStateOf(Vec2.ZERO) }
+    /** 지우개 중심 기준 누른 지점(−1 왼끝 ~ 1 오른끝). */
+    var pressLocal by remember(match) { mutableStateOf<Vec2?>(null) }
+    /** 누를 지점 보정(왼끝·가운데·오른끝 버튼). */
     var strikeOffset by remember(match) { mutableStateOf(0f) }
+    /** 지금 손가락 속도(무대 단위/초)·힘. */
+    var pressSpeed by remember(match) { mutableStateOf(0f) }
+    var livePower by remember(match) { mutableStateOf(0f) }
     var touchOffset by remember(match) { mutableStateOf<Float?>(null) }
+    val tracker = remember(match) { PressTracker() }
 
     // ── 3D 렌더링·물리 자원 ──
     val channel = remember(match) { SceneChannel() }
@@ -135,6 +146,16 @@ fun EraserBattleScreen(
     )
 
     val haptic = LocalHapticFeedback.current
+
+    /** 지금 누르고 있는 상태로 만들어질 한 번의 밀기(조준선·힘 표시와 같은 값). */
+    fun currentPush(): EraserPush? {
+        val local = pressLocal ?: return null
+        if (tracker.travel < EraserPress.MIN_TRAVEL) return null
+        val dir = tracker.direction()
+        if (dir.length() < 1e-3f) return null
+        val raw = EraserPress.push(local, dir, tracker.effectiveSpeed(), match.world.bodyOf(match.turn).type)
+        return raw.copy(strikeOffset = (raw.strikeOffset + strikeOffset * 0.6f).coerceIn(-1f, 1f))
+    }
 
     fun syncHud() {
         phaseNow = match.phase
@@ -259,25 +280,27 @@ fun EraserBattleScreen(
             if (startNanos == 0L) startNanos = now
             val seconds = (now - startNanos) / 1_000_000_000f
             val attackerBody = match.world.bodyOf(match.turn)
-            val aim = dragStart?.let { start ->
-                val vec = start - dragNow
+            val aim = pressPoint?.let { start ->
+                val vec = pushVec
                 if (vec.length() < 8f) {
                     null
                 } else {
-                    val predicted = if (aimAssist && vec.length() > 40f) {
-                        val v = Flick.velocityFromDrag(vec, attackerBody.type)
-                        if (v.length() > 60f) {
-                            EraserAi.predictRest(match.world, match.turn, v, strikeOffset)
-                        } else {
-                            null
-                        }
+                    val push = currentPush()
+                    val predicted = if (aimAssist && push != null && push.power > 0.2f) {
+                        EraserAi.predictRest(
+                            match.world,
+                            match.turn,
+                            push.velocity,
+                            push.strikeOffset,
+                            push.tip,
+                        )
                     } else {
                         null
                     }
                     EraserAim(
-                        from = attackerBody.pos,
-                        to = attackerBody.pos + vec,
-                        power = Flick.powerOf(vec),
+                        from = start,
+                        to = start + vec,
+                        power = livePower,
                         predicted = predicted,
                     )
                 }
@@ -312,8 +335,7 @@ fun EraserBattleScreen(
     val canAim = phaseNow == MatchPhase.AIMING && (turnNow == Side.PLAYER || twoPlayer)
     val attacker: EraserBody = match.world.bodyOf(turnNow)
 
-    val dragVector: Vec2? = dragStart?.let { it - dragNow }
-    val power = dragVector?.let { Flick.powerOf(it) } ?: 0f
+    val power = livePower
 
     Box(
         modifier = Modifier
@@ -346,69 +368,64 @@ fun EraserBattleScreen(
                         .background(Color(0xFF2A1C10))
                         .border(3.dp, Inks.Wood, RoundedCornerShape(16.dp))
                         .pointerInput(canAim, match, turnNow) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    if (canAim) {
-                                        val w = size.width.toFloat().coerceAtLeast(1f)
-                                        val h = size.height.toFloat().coerceAtLeast(1f)
-                                        val start = EraserScene3D.fieldPoint(
-                                            offset.x / w,
-                                            offset.y / h,
-                                            BOARD_ASPECT,
+                            // 지우개 가장자리를 **눌러 민다**.
+                            // 누른 자리가 회전(모먼트)을, 미는 속도가 힘을 정한다. 그래서
+                            // 처음 닿은 지점(down)과 손가락이 움직인 시각을 그대로 받아 쓴다.
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val w = size.width.toFloat().coerceAtLeast(1f)
+                                val h = size.height.toFloat().coerceAtLeast(1f)
+                                val start = EraserScene3D.fieldPoint(
+                                    down.position.x / w,
+                                    down.position.y / h,
+                                    BOARD_ASPECT,
+                                )
+                                val body = match.world.bodyOf(match.turn)
+                                val local = start?.let { EraserPress.localPress(body, it) }
+                                if (start == null || local == null || !canAim) {
+                                    return@awaitEachGesture
+                                }
+                                pressPoint = start
+                                pressLocal = local
+                                pushVec = Vec2.ZERO
+                                livePower = 0f
+                                pressSpeed = 0f
+                                touchOffset = local.x
+                                tracker.begin(start, down.uptimeMillis)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    val point = EraserScene3D.fieldPoint(
+                                        change.position.x / w,
+                                        change.position.y / h,
+                                        BOARD_ASPECT,
+                                    )
+                                    if (point != null) {
+                                        tracker.sample(point, change.uptimeMillis)
+                                        pushVec = point - start
+                                        pressSpeed = tracker.effectiveSpeed(change.uptimeMillis)
+                                        livePower = EraserPress.powerFor(
+                                            pressSpeed,
+                                            match.world.bodyOf(match.turn).type,
                                         )
-                                        if (start != null) {
-                                            dragStart = start
-                                            dragNow = start
-                                            // 손가락이 지우개에 닿은 지점이 곧 때리는 지점이 된다.
-                                            val body = match.world.bodyOf(match.turn)
-                                            val dx = start.x - body.pos.x
-                                            val dy = start.y - body.pos.y
-                                            val reach = body.radius * 1.8f
-                                            if (dx * dx + dy * dy <= reach * reach) {
-                                                val off = (dx / body.radius).coerceIn(-1f, 1f)
-                                                strikeOffset = (off * 10f).roundToInt() / 10f
-                                                touchOffset = off
-                                            } else {
-                                                touchOffset = null
-                                            }
-                                        }
                                     }
-                                },
-                                onDrag = { change, _ ->
-                                    if (canAim && dragStart != null) {
-                                        val w = size.width.toFloat().coerceAtLeast(1f)
-                                        val h = size.height.toFloat().coerceAtLeast(1f)
-                                        val point = EraserScene3D.fieldPoint(
-                                            change.position.x / w,
-                                            change.position.y / h,
-                                            BOARD_ASPECT,
-                                        )
-                                        if (point != null) dragNow = point
-                                        change.consume()
-                                    }
-                                },
-                                onDragEnd = {
-                                    val start = dragStart
-                                    if (canAim && start != null) {
-                                        val vec = start - dragNow
-                                        val velocity = Flick.velocityFromDrag(vec, attacker.type)
-                                        if (velocity.length() > 40f) {
-                                            match.flick(velocity, strikeOffset)
-                                            if (haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            moveCount++
-                                            syncHud()
-                                        }
-                                    }
-                                    dragStart = null
-                                    dragNow = Vec2.ZERO
-                                    touchOffset = null
-                                },
-                                onDragCancel = {
-                                    dragStart = null
-                                    dragNow = Vec2.ZERO
-                                    touchOffset = null
-                                },
-                            )
+                                    change.consume()
+                                }
+                                val push = if (canAim) currentPush() else null
+                                if (push != null && push.canShoot) {
+                                    match.flick(push.velocity, push.strikeOffset, push.tip)
+                                    if (haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    moveCount++
+                                    syncHud()
+                                }
+                                pressPoint = null
+                                pressLocal = null
+                                pushVec = Vec2.ZERO
+                                livePower = 0f
+                                pressSpeed = 0f
+                                touchOffset = null
+                            }
                         },
                 ) {
                     Game3DView(channel = channel, modifier = Modifier.fillMaxSize())
@@ -566,8 +583,8 @@ private fun BattleFooter(
     ) {
         Text(
             text = when {
-                canAim && turnNow == Side.PLAYER -> "내 차례 — 지우개를 뒤로 당겼다 놓으세요"
-                canAim && twoPlayer -> "2P 차례 — 기기를 넘겨받고 당겼다 놓으세요"
+                canAim && turnNow == Side.PLAYER -> "내 차례 — 지우개 가장자리를 눌러 밀어내세요"
+                canAim && twoPlayer -> "2P 차례 — 기기를 넘겨받고 가장자리를 누르세요"
                 else -> "상대가 겨냥하는 중…"
             },
             fontSize = 15.sp,
@@ -580,7 +597,7 @@ private fun BattleFooter(
                 PowerMeter(
                     value = power,
                     modifier = Modifier.fillMaxWidth(),
-                    caption = if (power > 0.01f) "힘 ${(power * 100).toInt()}%" else "당길수록 세게 날아갑니다",
+                    caption = if (power > 0.01f) "힘 ${(power * 100).toInt()}%" else "빠르게 밀수록 세게 나갑니다",
                 )
             }
             WoodKnob("왼끝", strikeOffset < -0.25f) { onStrikeOffset(-0.8f) }

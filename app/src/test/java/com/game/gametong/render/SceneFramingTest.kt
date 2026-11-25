@@ -115,6 +115,29 @@ class SceneFramingTest {
     }
 
     @Test
+    fun `놀이판 비율이 달라져도 네 모서리가 화면 안에 담긴다`() {
+        // 네모 딱지 화면은 놀이판 상자를 꽉 채우도록 화면 비율을 따라간다.
+        val match = SquareTtakjiMatch(
+            surface = TtakjiSurface.DIRT,
+            playerSpec = TtakjiSpec(TtakjiMaterial.COLOR_PAPER, 2),
+            aiSpec = TtakjiSpec(TtakjiMaterial.CARDSTOCK, 2),
+        )
+        for (a in listOf(0.45f, 0.55f, 0.66f, 0.8f, 0.95f, 1.1f)) {
+            val scene = TtakjiScene3D.build(match, null, null, null, emptyList(), a)
+            for (x in listOf(0f, 1000f)) {
+                for (y in listOf(0f, 1500f)) {
+                    val uv = scene.project(Vec3(x * World.SCALE, 0f, y * World.SCALE), a)
+                    assertNotNull("비율 $a 모서리($x,$y)가 화면 밖", uv)
+                    assertTrue("비율 $a u=${uv!![0]}", uv[0] in -0.02f..1.02f)
+                    assertTrue("비율 $a v=${uv[1]}", uv[1] in -0.02f..1.02f)
+                }
+            }
+            val (w, h) = spans(scene, 5f, 7.5f, 5.2f, 7.3f, a)
+            assertTrue("비율 $a 채움 ${w} x ${h}", maxOf(w, h) > 0.85f)
+        }
+    }
+
+    @Test
     fun `지우개 두 개가 화면 안에 보인다`() {
         val w = world()
         val scene = EraserScene3D.build(

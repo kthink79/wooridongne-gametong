@@ -1,7 +1,9 @@
 package com.game.gametong.game
 
 import com.game.gametong.game.physics3d.MarbleSpin
+import com.game.gametong.game.physics3d.Quat
 import com.game.gametong.game.physics3d.SphereCcd
+import com.game.gametong.game.physics3d.Vec3
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -21,10 +23,41 @@ data class MarbleBody(
     var spin: Float = 0f,
     /** 가로 스핀(탑스핀·백스핀, 도/초). 궤적을 살짝 휘게 한다. */
     var sideSpin: Float = 0f,
+    /**
+     * 굴러간 자세(월드 사원수). 이동 거리/반지름만큼 **접지점을 축으로** 굴린다.
+     * 유리구슬 속 회오리 무늬가 진행 방향으로 돌아가야 "구르는" 것으로 보인다.
+     */
+    var rollQuat: Quat = Quat.IDENTITY,
 ) {
     val mass: Float get() = radius * radius * (if (king) 1.6f else 1f)
     val moving: Boolean get() = !sunk && vel.length() > 1f
+
+    /** 이 구슬이 지금 어느 쪽으로 굴러가는지(단위 벡터). 멈췄으면 null. */
+    val rollAxisWorld: Vec3?
+        get() {
+            val v = vel.length()
+            if (v < 1f) return null
+            // 무대 (x, y) → 세계 (x, z). 구르는 축 = 위 × 진행 방향.
+            return Vec3(vel.y / v, 0f, -vel.x / v).normalized()
+        }
 }
+
+/**
+ * 한 스텝에 일어난 충돌 하나. 화면에서 불티·먼지를 터뜨리고 충격 링을 그리는 데 쓴다.
+ *
+ * @param strength 맞부딪힌 세기(무대 단위/초)
+ * @param a 첫 구슬 id ([wall] 이면 같은 값)
+ * @param b 두 번째 구슬 id
+ * @param wall 바닥 경계에 부딪힌 것인지
+ */
+data class MarbleImpact(
+    val x: Float,
+    val y: Float,
+    val strength: Float,
+    val a: Int,
+    val b: Int,
+    val wall: Boolean = false,
+)
 
 /**
  * 구슬 여러 개가 구르는 바닥.
@@ -52,7 +85,30 @@ class MarbleWorld(
     var elapsed: Float = 0f
         private set
 
+    /** 이번 스텝들에서 일어난 충돌(화면이 [drainImpacts] 로 가져간다). */
+    private val impactQueue = ArrayList<MarbleImpact>(16)
+
     val moving: Boolean get() = marbles.any { it.moving }
+
+    /** 쌓인 충돌을 모두 가져가고 비운다. */
+    fun drainImpacts(): List<MarbleImpact> {
+        if (impactQueue.isEmpty()) return emptyList()
+        val out = ArrayList<MarbleImpact>(impactQueue)
+        impactQueue.clear()
+        return out
+    }
+
+    /** 가장 최근 충돌 세기(카메라 흔들림·소리 연출용). */
+    var lastImpactStrength: Float = 0f
+        private set
+
+    private fun recordImpact(impact: MarbleImpact) {
+        if (impact.strength < 18f) return
+        if (impactQueue.size >= 24) impactQueue.removeAt(0)
+        impactQueue += impact
+        if (impact.strength > lastImpactStrength) lastImpactStrength = impact.strength
+        lastImpactStrength *= 0.9f
+    }
 
     fun body(id: Int): MarbleBody? = marbles.firstOrNull { it.id == id }
 
@@ -146,17 +202,25 @@ class MarbleWorld(
             if (m.sunk) continue
             if (m.pos.x < m.radius) {
                 m.pos = Vec2(m.radius, m.pos.y)
+                val hit = abs(m.vel.x)
                 m.vel = Vec2(-m.vel.x * restitution, m.vel.y)
+                recordImpact(MarbleImpact(m.pos.x, m.pos.y, hit, m.id, m.id, wall = true))
             } else if (m.pos.x > width - m.radius) {
                 m.pos = Vec2(width - m.radius, m.pos.y)
+                val hit = abs(m.vel.x)
                 m.vel = Vec2(-m.vel.x * restitution, m.vel.y)
+                recordImpact(MarbleImpact(m.pos.x, m.pos.y, hit, m.id, m.id, wall = true))
             }
             if (m.pos.y < m.radius) {
                 m.pos = Vec2(m.pos.x, m.radius)
+                val hit = abs(m.vel.y)
                 m.vel = Vec2(m.vel.x, -m.vel.y * restitution)
+                recordImpact(MarbleImpact(m.pos.x, m.pos.y, hit, m.id, m.id, wall = true))
             } else if (m.pos.y > height - m.radius) {
                 m.pos = Vec2(m.pos.x, height - m.radius)
+                val hit = abs(m.vel.y)
                 m.vel = Vec2(m.vel.x, -m.vel.y * restitution)
+                recordImpact(MarbleImpact(m.pos.x, m.pos.y, hit, m.id, m.id, wall = true))
             }
         }
     }
@@ -183,6 +247,16 @@ class MarbleWorld(
                 val rel = b.vel - a.vel
                 val vn = rel.dot(n)
                 if (vn >= 0f) continue
+                // 맞부딪힌 지점(두 구슬 중심 사이)에 불티·먼지를 터뜨린다.
+                recordImpact(
+                    MarbleImpact(
+                        x = a.pos.x + n.x * a.radius,
+                        y = a.pos.y + n.y * a.radius,
+                        strength = -vn,
+                        a = a.id,
+                        b = b.id,
+                    )
+                )
                 val impulse = -(1f + restitution) * vn / invSum
                 a.vel = a.vel - n * (impulse * invA)
                 b.vel = b.vel + n * (impulse * invB)
@@ -196,13 +270,25 @@ class MarbleWorld(
         }
     }
 
-    /** 굴러가는 각도와 가로 스핀(궤적을 살짝 휘게 한다). */
+    /**
+     * 굴러가는 자세·각도와 가로 스핀(궤적을 살짝 휘게 한다).
+     *
+     * 굴림은 **이동 거리 / 반지름** 만큼 접지점을 축으로 돌린다(미끄러짐 없이 구르는 조건).
+     * 유리구슬 속 회오리 무늬가 이 회전을 따라 돌아가야 공이 구르는 것으로 보인다.
+     */
     private fun applySpin(dt: Float) {
         for (m in marbles) {
             if (m.sunk) continue
             val speed = m.vel.length()
             if (speed > 0f) {
                 m.spin = (m.spin + MarbleSpin.rollRate(speed, m.radius) * dt) % 360f
+                val axis = m.rollAxisWorld
+                if (axis != null) {
+                    val angle = (speed * dt) / m.radius.coerceAtLeast(1f)
+                    if (angle > 1e-4f) {
+                        m.rollQuat = (Quat.axisAngle(axis, angle) * m.rollQuat).normalized()
+                    }
+                }
                 if (m.sideSpin != 0f) {
                     val dir = m.vel * (1f / speed)
                     val lateral = Vec2(-dir.y, dir.x)
@@ -247,6 +333,25 @@ class MarbleWorld(
     }
 }
 
+/**
+ * 조준 예측 결과. 당구처럼 "내 구슬이 어디에 맞고, 맞은 구슬이 어느 쪽으로 날아가는지"를 보여 준다.
+ *
+ * @param contact 처음 닿는 지점(무대 좌표)
+ * @param targetId 맞는 구슬 id(벽이면 -1)
+ * @param targetDir 맞은 구슬이 밀려나는 방향(단위)
+ * @param cueDir 내 구슬이 꺾여 가는 방향(단위, 정면 충돌이면 영벡터)
+ * @param distance 내 구슬이 그 지점까지 굴러가는 거리
+ * @param wall 바닥 경계에 먼저 닿는지
+ */
+data class MarbleAimPrediction(
+    val contact: Vec2,
+    val targetId: Int,
+    val targetDir: Vec2,
+    val cueDir: Vec2,
+    val distance: Float,
+    val wall: Boolean,
+)
+
 /** 구슬 조준 도우미(AI와 테스트가 같은 식을 쓴다). */
 object MarbleAim {
     const val MAX_SPEED = 1500f
@@ -266,6 +371,89 @@ object MarbleAim {
     fun velocity(aimDeg: Float, power: Float, forwardSign: Float): Vec2 {
         val dir = SquareTtakjiEngine.aimDirection(aimDeg, forwardSign)
         return dir * (MAX_SPEED * power.coerceIn(0f, 1f))
+    }
+
+    /**
+     * 이 방향으로 굴러가면 **처음 무엇에 닿는지** 미리 계산한다(조준선·고스트 링).
+     *
+     * 구슬은 원(반지름 r1+r2)과 광선의 교점으로, 벽은 경계면까지의 거리로 구해 가까운 쪽을 고른다.
+     * 이동 거리는 [maxDistance] 로 잘라 지나치게 긴 선을 그리지 않는다.
+     */
+    fun predict(
+        world: MarbleWorld,
+        from: Vec2,
+        velocity: Vec2,
+        radius: Float,
+        ignoreId: Int? = null,
+        maxDistance: Float = 1100f,
+    ): MarbleAimPrediction? {
+        val speed = velocity.length()
+        if (speed < 1f) return null
+        val d = velocity * (1f / speed)
+
+        var bestT = maxDistance
+        var bestBall: MarbleBody? = null
+        for (m in world.marbles) {
+            if (m.sunk || m.id == ignoreId) continue
+            val toCenter = m.pos - from
+            val proj = toCenter.dot(d)
+            if (proj <= 0f) continue
+            val sum = radius + m.radius
+            val perpSq = toCenter.x * toCenter.x + toCenter.y * toCenter.y - proj * proj
+            val hitSq = sum * sum - perpSq
+            if (hitSq < 0f) continue
+            val t = proj - sqrt(hitSq)
+            if (t < 0f) continue
+            if (t < bestT) {
+                bestT = t
+                bestBall = m
+            }
+        }
+
+        // 벽까지의 거리(구슬 중심이 닿는 자리)
+        val wallT = run {
+            var t = maxDistance
+            if (d.x > 1e-4f) t = minOf(t, (world.width - radius - from.x) / d.x)
+            if (d.x < -1e-4f) t = minOf(t, (radius - from.x) / d.x)
+            if (d.y > 1e-4f) t = minOf(t, (world.height - radius - from.y) / d.y)
+            if (d.y < -1e-4f) t = minOf(t, (radius - from.y) / d.y)
+            t.coerceAtLeast(0f)
+        }
+
+        val ball = bestBall
+        if (ball == null && wallT >= maxDistance) {
+            return MarbleAimPrediction(
+                contact = from + d * maxDistance,
+                targetId = -1,
+                targetDir = Vec2.ZERO,
+                cueDir = d,
+                distance = maxDistance,
+                wall = false,
+            )
+        }
+        if (ball == null || wallT < bestT) {
+            return MarbleAimPrediction(
+                contact = from + d * wallT,
+                targetId = -1,
+                targetDir = Vec2.ZERO,
+                cueDir = Vec2(-d.x, -d.y),
+                distance = wallT,
+                wall = true,
+            )
+        }
+        val contact = from + d * bestT
+        // 접점의 법선은 목표 중심 → 접점 방향이다. 맞은 구슬은 그 **반대쪽**으로 밀린다.
+        val n = (contact - ball.pos).normalized()
+        val along = d.dot(n)
+        val cueDir = Vec2(d.x - n.x * along, d.y - n.y * along)
+        return MarbleAimPrediction(
+            contact = contact,
+            targetId = ball.id,
+            targetDir = if (n.length() > 0f) Vec2(-n.x, -n.y) else d,
+            cueDir = if (cueDir.length() > 1e-3f) cueDir.normalized() else Vec2.ZERO,
+            distance = bestT,
+            wall = false,
+        )
     }
 }
 
@@ -297,6 +485,9 @@ class MarbleCircleGame(
         const val MARBLE_RADIUS = 24f
         const val MAX_TURNS = 8
         const val WIN_SCORE = 3
+
+        /** 한 수가 굴러가는 최대 시간(초). 이보다 오래 걸리면 연출을 끊는다. */
+        const val MAX_SHOT_SECONDS = 6.5f
     }
 
     val center = Vec2(CIRCLE_X, CIRCLE_Y)
@@ -360,13 +551,54 @@ class MarbleCircleGame(
         king.sunk = false
     }
 
-    fun shoot(side: Side, aimDeg: Float, power: Float): CircleShotResult {
-        if (finished) return CircleShotResult(side, emptyList(), true, 0f)
+    // ── 실제로 굴러가는 한 수(화면 연출용) ──────────────────────────
+    // 예전에는 shoot() 안에서 끝까지 계산해 결과만 보여 줬다. 이제는 세 단계로 나눠
+    // 화면이 매 프레임 [advanceShot] 을 불러 구슬이 구르고 부딪히는 과정을 그대로 보여 준다.
+
+    /** 지금 구슬이 굴러가는 중인가. */
+    var inFlight: Boolean = false
+        private set
+
+    /** 이번 수의 시작 자리(이동 거리 계산용). */
+    private var shotStart: Vec2 = Vec2.ZERO
+    private var shotSide: Side = Side.PLAYER
+    private var shotAccum: Float = 0f
+    private var shotElapsed: Float = 0f
+
+    /** 조준을 정해 왕구슬을 친다. 결과는 [advanceShot] 이 끝난 뒤 [finishShot] 으로 낸다. */
+    fun beginShot(side: Side, aimDeg: Float, power: Float): Boolean {
+        if (finished || inFlight) return false
         placeKing(side)
-        val start = king.pos
+        shotStart = king.pos
+        shotSide = side
         king.vel = MarbleAim.velocity(aimDeg, power, if (side == Side.PLAYER) -1f else 1f)
-        world.simulateUntilRest()
-        val travelled = king.pos.distanceTo(start)
+        world.lastHitA = -1
+        world.lastHitB = -1
+        shotAccum = 0f
+        shotElapsed = 0f
+        inFlight = true
+        return true
+    }
+
+    /** 실시간 한 프레임만큼 굴린다. 아직 굴러가는 중이면 true. */
+    fun advanceShot(dtSeconds: Float): Boolean {
+        if (!inFlight) return false
+        shotAccum += dtSeconds.coerceIn(0f, 0.1f)
+        while (shotAccum >= MarbleWorld.FIXED_DT && shotElapsed < MAX_SHOT_SECONDS) {
+            world.step()
+            shotAccum -= MarbleWorld.FIXED_DT
+            shotElapsed += MarbleWorld.FIXED_DT
+            if (!world.moving) break
+        }
+        if (!world.moving || shotElapsed >= MAX_SHOT_SECONDS) inFlight = false
+        return inFlight
+    }
+
+    /** 굴러간 결과를 정산한다(점수·차례·문구). */
+    fun finishShot(): CircleShotResult {
+        val side = shotSide
+        inFlight = false
+        val travelled = king.pos.distanceTo(shotStart)
         val claimed = mutableListOf<Int>()
         for (glass in glasses) {
             if (glass.sunk) continue
@@ -397,8 +629,21 @@ class MarbleCircleGame(
         return result
     }
 
-    fun aiShoot(): CircleShotResult {
-        if (twoPlayer) return shoot(Side.AI, 0f, 0.5f)
+    /** 한 수를 끝까지 계산한다(테스트·AI 예측용). */
+    fun shoot(side: Side, aimDeg: Float, power: Float): CircleShotResult {
+        if (!beginShot(side, aimDeg, power)) return CircleShotResult(side, emptyList(), true, 0f)
+        runToRest()
+        return finishShot()
+    }
+
+    private fun runToRest() {
+        var guard = 0
+        while (advanceShot(MarbleWorld.FIXED_DT) && guard < 2000) guard++
+    }
+
+    /** AI가 노릴 각도·힘. 화면과 테스트가 같은 값을 쓴다. */
+    fun aiPlan(): Pair<Float, Float> {
+        if (twoPlayer) return 0f to 0.5f
         val target: Vec2 = glasses.filter { !it.sunk }
             .maxByOrNull { it.pos.distanceTo(center) }
             ?.pos ?: center
@@ -408,6 +653,18 @@ class MarbleCircleGame(
         val miss = 1f - aiSkill.coerceIn(0f, 1f)
         val power = (base + (random.nextFloat() * 2f - 1f) * 0.2f * miss).coerceIn(0.1f, 1f)
         val angle = aim + (random.nextFloat() * 2f - 1f) * 8f * miss
+        return angle to power
+    }
+
+    /** AI 한 수를 실제로 굴리기 시작한다(화면 연출). */
+    fun aiBeginShot(): Boolean {
+        val (angle, power) = aiPlan()
+        return beginShot(Side.AI, angle, power)
+    }
+
+    fun aiShoot(): CircleShotResult {
+        if (twoPlayer) return shoot(Side.AI, 0f, 0.5f)
+        val (angle, power) = aiPlan()
         return shoot(Side.AI, angle, power)
     }
 
@@ -454,6 +711,9 @@ class MarbleHoleGame(
 
         /** 구멍 가장자리의 비스듬한 경사(구멍으로 빨려 들어가는 가속도, 단위/초²). */
         const val HOLE_SLOPE = 1800f
+
+        /** 한 수가 굴러가는 최대 시간(초). 화면 연출을 끊는 한계. */
+        const val MAX_SHOT_SECONDS = 6.5f
     }
 
     val holes = listOf(Vec2(500f, 250f), Vec2(500f, 530f), Vec2(500f, 810f))
@@ -508,51 +768,92 @@ class MarbleHoleGame(
         body.sunk = false
     }
 
-    fun shoot(side: Side, aimDeg: Float, power: Float): HoleShotResult {
-        if (finished) return HoleShotResult(side, -1, false, false, false, false, startOf(side))
+    // ── 실제로 굴러가는 한 수(화면 연출용) ────────────────────────
+
+    /** 지금 구슬이 굴러가는 중인가. */
+    var inFlight: Boolean = false
+        private set
+
+    private var liveSide: Side = Side.PLAYER
+    private var liveProgress = 0
+    private var liveHoleIndex = -1
+    private var liveProgressed = false
+    private var liveWrongOrder = false
+    private var liveHitOpponent = false
+    private var liveSunk = false
+    private var liveElapsed = 0f
+    private var liveAccum = 0f
+
+    fun beginShot(side: Side, aimDeg: Float, power: Float): Boolean {
+        if (finished || inFlight) return false
         resetMarble(side)
         val mine = marbleOf(side)
-        val other = marbleOf(side.other())
         mine.vel = MarbleAim.velocity(aimDeg, power, if (side == Side.PLAYER) -1f else 1f)
         world.lastHitA = -1
         world.lastHitB = -1
+        liveSide = side
+        liveProgress = progressOf(side)
+        liveHoleIndex = -1
+        liveProgressed = false
+        liveWrongOrder = false
+        liveHitOpponent = false
+        liveSunk = false
+        liveElapsed = 0f
+        liveAccum = 0f
+        inFlight = true
+        return true
+    }
 
-        var progress = progressOf(side)
-        var holeIndex = -1
-        var progressed = false
-        var wrongOrder = false
-        var hitOpponent = false
-        var sunk = false
-        var t = 0f
-        while (world.moving && t < 6f) {
+    /** 실시간 한 프레임만큼 굴린다. 아직 굴러가는 중이면 true. */
+    fun advanceShot(dtSeconds: Float): Boolean {
+        if (!inFlight) return false
+        liveAccum += dtSeconds.coerceIn(0f, 0.1f)
+        while (liveAccum >= MarbleWorld.FIXED_DT && liveElapsed < MAX_SHOT_SECONDS) {
             world.step()
-            t += 1f / 120f
-            if (world.lastHitA == mine.id && world.lastHitB == other.id ||
-                world.lastHitB == mine.id && world.lastHitA == other.id
-            ) {
-                hitOpponent = true
-            }
-            if (sunk) continue
-            for ((index, hole) in holes.withIndex()) {
-                val near = mine.pos.distanceTo(hole) <= HOLE_R * 0.88f
-                if (near && mine.vel.length() <= CATCH_SPEED) {
-                    holeIndex = index
-                    mine.pos = hole
-                    mine.vel = Vec2.ZERO
-                    sunk = true
-                    if (index == progress) {
-                        progress++
-                        progressed = true
-                    } else {
-                        wrongOrder = true
-                    }
-                    break
+            liveAccum -= MarbleWorld.FIXED_DT
+            liveElapsed += MarbleWorld.FIXED_DT
+            scanShotStep()
+            if (!world.moving) break
+        }
+        if (!world.moving || liveElapsed >= MAX_SHOT_SECONDS) inFlight = false
+        return inFlight
+    }
+
+    /** 한 스텝마다 구멍에 빠졌는지·상대를 맞혔는지 본다. */
+    private fun scanShotStep() {
+        val mine = marbleOf(liveSide)
+        val other = marbleOf(liveSide.other())
+        if ((world.lastHitA == mine.id && world.lastHitB == other.id) ||
+            (world.lastHitB == mine.id && world.lastHitA == other.id)
+        ) {
+            liveHitOpponent = true
+        }
+        if (liveSunk) return
+        for ((index, hole) in holes.withIndex()) {
+            val near = mine.pos.distanceTo(hole) <= HOLE_R * 0.88f
+            if (near && mine.vel.length() <= CATCH_SPEED) {
+                liveHoleIndex = index
+                mine.pos = hole
+                mine.vel = Vec2.ZERO
+                liveSunk = true
+                if (index == liveProgress) {
+                    liveProgress++
+                    liveProgressed = true
+                } else {
+                    liveWrongOrder = true
                 }
+                break
             }
         }
+    }
 
+    /** 굴러간 결과를 정산한다(점수·차례·문구). */
+    fun finishShot(): HoleShotResult {
+        val side = liveSide
+        inFlight = false
+        var progress = liveProgress
         var claimed = false
-        if (progress >= 3 && hitOpponent) {
+        if (progress >= 3 && liveHitOpponent) {
             claimed = true
             if (side == Side.PLAYER) playerScore++ else aiScore++
             progress = 0
@@ -572,30 +873,31 @@ class MarbleHoleGame(
                 if (side == Side.PLAYER) "상대 구슬을 맞혔다! 한 개 따먹고 다시 1번 구멍부터."
                 else "상대가 내 구슬을 따먹었다…"
             }
-            progressed -> {
-                if (side == Side.PLAYER) "${holeIndex + 1}번 구멍 성공! 한 번 더 칩니다."
-                else "상대가 ${holeIndex + 1}번 구멍에 넣었다."
+            liveProgressed -> {
+                if (side == Side.PLAYER) "${liveHoleIndex + 1}번 구멍 성공! 한 번 더 칩니다."
+                else "상대가 ${liveHoleIndex + 1}번 구멍에 넣었다."
             }
-            wrongOrder -> {
-                if (side == Side.PLAYER) "${holeIndex + 1}번 구멍은 아직 순서가 아니다."
+            liveWrongOrder -> {
+                if (side == Side.PLAYER) "${liveHoleIndex + 1}번 구멍은 아직 순서가 아니다."
                 else "상대가 순서를 틀렸다."
             }
-            hitOpponent -> "상대 구슬을 맞혔지만 구멍 3개를 아직 다 넣지 않았다."
+            liveHitOpponent -> "상대 구슬을 맞혔지만 구멍 3개를 아직 다 넣지 않았다."
             else -> if (side == Side.PLAYER) "아깝다, 빗나갔다." else "상대가 빗나갔다."
         }
+        val mine = marbleOf(side)
         val result = HoleShotResult(
             side = side,
-            holeIndex = holeIndex,
-            progressed = progressed,
-            wrongOrder = wrongOrder,
+            holeIndex = liveHoleIndex,
+            progressed = liveProgressed,
+            wrongOrder = liveWrongOrder,
             claimedOpponent = claimed,
-            hitOpponent = hitOpponent,
+            hitOpponent = liveHitOpponent,
             endPos = mine.pos,
         )
         lastResult = result
         checkFinish()
         if (!finished) {
-            val again = progressed && !claimed
+            val again = liveProgressed && !claimed
             if (!again) turn = side.other()
             resetMarble(turn)
             resetMarble(turn.other())
@@ -603,8 +905,19 @@ class MarbleHoleGame(
         return result
     }
 
-    fun aiShoot(): HoleShotResult {
-        if (twoPlayer) return shoot(Side.AI, 0f, 0.5f)
+    /** 한 수를 끝까지 계산한다(테스트·AI 예측용). */
+    fun shoot(side: Side, aimDeg: Float, power: Float): HoleShotResult {
+        if (!beginShot(side, aimDeg, power)) {
+            return HoleShotResult(side, -1, false, false, false, false, startOf(side))
+        }
+        var guard = 0
+        while (advanceShot(MarbleWorld.FIXED_DT) && guard < 2000) guard++
+        return finishShot()
+    }
+
+    /** AI가 노릴 각도·힘. */
+    fun aiPlan(): Pair<Float, Float> {
+        if (twoPlayer) return 0f to 0.5f
         val me = aiMarble
         val target = if (progressOf(Side.AI) >= 3) playerMarble.pos
         else holes[progressOf(Side.AI)]
@@ -613,6 +926,18 @@ class MarbleHoleGame(
         val miss = 1f - aiSkill.coerceIn(0f, 1f)
         val angle = aim + (random.nextFloat() * 2f - 1f) * 6f * miss
         val power = (base + (random.nextFloat() * 2f - 1f) * 0.12f * miss).coerceIn(0.1f, 1f)
+        return angle to power
+    }
+
+    /** AI 한 수를 실제로 굴리기 시작한다(화면 연출). */
+    fun aiBeginShot(): Boolean {
+        val (angle, power) = aiPlan()
+        return beginShot(Side.AI, angle, power)
+    }
+
+    fun aiShoot(): HoleShotResult {
+        if (twoPlayer) return shoot(Side.AI, 0f, 0.5f)
+        val (angle, power) = aiPlan()
         return shoot(Side.AI, angle, power)
     }
 

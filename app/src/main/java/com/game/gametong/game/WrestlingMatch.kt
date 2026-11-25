@@ -76,16 +76,24 @@ class WrestlingMatch(
     val isPlayerTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.PLAYER
     val isAiTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.AI
 
-    override fun flick(velocity: Vec2, strikeOffset: Float) {
+    /**
+     * AI도 가장자리를 눌러 미는 것처럼 친다 — 사람과 같은 손맛(젖힘)을 쓴다.
+     * 너무 크면 뒤집혀 버리므로 0.35 로 둔다.
+     */
+    override val aiTip: Float get() = 0.35f
+
+    override fun flick(velocity: Vec2, strikeOffset: Float, tip: Float) {
         if (phase != MatchPhase.AIMING) return
         if (velocity.length() < 40f) return
-        world.flick(turn, velocity, strikeOffset)
+        world.flick(turn, velocity, strikeOffset, tip)
         phase = MatchPhase.MOVING
     }
 
     /** 움직임이 멈춘 뒤 호출. 걸쳐 앉았으면 COUNTING, 아니면 다음 턴을 이어 간다. */
     fun settleFlick(): TurnOutcome {
         check(phase == MatchPhase.MOVING) { "움직이는 중일 때만 정산할 수 있다" }
+        // 화면은 settle() 을 부르지 않고 바로 정산하므로, 걸친 자세를 지금 자리에 맞춰 확정한다.
+        world.snapPerchPose()
         val attacker = world.bodyOf(turn)
         val defender = world.bodyOf(turn.other())
         val lean = attacker.lean
@@ -148,7 +156,15 @@ class WrestlingMatch(
     override fun aiVelocity(accuracy: Float, strikeOffset: Float): Vec2 {
         aiThrough++
         val noisyRandom = Random(random.nextLong() xor (aiThrough * 7919L))
-        return EraserAi.choose(world, turn, AiMode.WRESTLING, accuracy, noisyRandom, strikeOffset)
+        return EraserAi.choose(
+            world = world,
+            attacker = turn,
+            mode = AiMode.WRESTLING,
+            accuracy = accuracy,
+            random = noisyRandom,
+            strikeOffset = strikeOffset,
+            tip = aiTip,
+        )
     }
 
     /**

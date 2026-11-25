@@ -13,11 +13,20 @@ interface DuelMatch {
     val winner: Side?
     val isFinished: Boolean
 
+    /** AI가 칠 때 함께 쓰는 젖힘(뒤집기) 정도. 레슬링만 0보다 크다. */
+    val aiTip: Float get() = 0f
+
     /** 가운데를 때린 것으로 본다. */
     fun flick(velocity: Vec2) = flick(velocity, 0f)
 
     /** 중심에서 벗어난 타격. */
-    fun flick(velocity: Vec2, strikeOffset: Float)
+    fun flick(velocity: Vec2, strikeOffset: Float) = flick(velocity, strikeOffset, aiTip)
+
+    /**
+     * 가장자리를 눌러 미는 타격.
+     * [tip] 은 앞으로 젖혀지는 정도로, 상대 위로 넘어가는(따먹기) 각운동량을 준다.
+     */
+    fun flick(velocity: Vec2, strikeOffset: Float, tip: Float)
 
     fun aiVelocity(accuracy: Float = 0.8f): Vec2 = aiVelocity(accuracy, 0f)
 
