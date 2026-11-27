@@ -14,6 +14,9 @@ enum class TurnOutcome {
 
     /** 내 지우개가 책상 밖으로 떨어졌다(링아웃). */
     FELL,
+
+    /** 밑에 깔려 있던 지우개가 상대를 떼어 내고 빠져나왔다. */
+    ESCAPE,
 }
 
 /**
@@ -62,6 +65,15 @@ class WrestlingMatch(
     var turnNumber: Int = 1
         private set
 
+    /**
+     * 이번 턴이 **밑에 깔린 채로 시작하는 턴**인가.
+     *
+     * 카운트를 내준 지우개는 저절로 풀려나지 않는다. 상대가 위에 걸쳐 앉은 그대로 다음 턴이
+     * 시작되고, 아래에서 밀어 떨어뜨리거나 빠져나와야 한다.
+     */
+    var isEscapeTurn: Boolean = false
+        private set
+
     override val world: EraserWorld = newWorld()
     override val isFinished: Boolean get() = phase == MatchPhase.FINISHED
     private var aiThrough = 0
@@ -71,7 +83,7 @@ class WrestlingMatch(
         opponent = EraserBody(Side.AI, aiType, AI_HOME, AI_HOME),
         immovableSide = turn.other(),
         surface = surface,
-    )
+    ).also { it.holdEscape = false }
 
     val isPlayerTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.PLAYER
     val isAiTurn: Boolean get() = phase == MatchPhase.AIMING && turn == Side.AI
@@ -92,6 +104,7 @@ class WrestlingMatch(
     /** 움직임이 멈춘 뒤 호출. 걸쳐 앉았으면 COUNTING, 아니면 다음 턴을 이어 간다. */
     fun settleFlick(): TurnOutcome {
         check(phase == MatchPhase.MOVING) { "움직이는 중일 때만 정산할 수 있다" }
+        if (isEscapeTurn) return settleEscape()
         // 화면은 settle() 을 부르지 않고 바로 정산하므로, 걸친 자세를 지금 자리에 맞춰 확정한다.
         world.snapPerchPose()
         val attacker = world.bodyOf(turn)
@@ -135,6 +148,9 @@ class WrestlingMatch(
                 lastPinQuality = 0f
                 prepareNextTurn()
             }
+
+            // 깔린 쪽의 정산([settleEscape])에서만 나오는 결과다.
+            TurnOutcome.ESCAPE -> Unit
         }
         return outcome
     }
@@ -150,12 +166,60 @@ class WrestlingMatch(
             phase = MatchPhase.FINISHED
             return
         }
+        // 누른 지우개가 **그대로 위에 걸쳐 있으면** 풀어 주지 않는다 — 깔린 쪽이 자기 턴에
+        // 아래에서 밀어 떨어뜨리거나 빠져나와야 한다. 자리가 흐트러졌으면 평소처럼 풀어 놓는다.
+        val holder = world.bodyOf(side)
+        val stillHolding = world.pinQualityFor(side) > 0f && world.overlapRatio(holder, world.bodyOf(side.other())) >= Board.PIN_OVERLAP
+        prepareNextTurn(holdSide = if (stillHolding) side else null)
+    }
+
+    /**
+     * 깔려 있는 쪽의 턴을 정산한다.
+     *
+     * - 상대를 떼어 내고 빠져나왔으면 [TurnOutcome.ESCAPE] — 다음 턴은 상대에게.
+     * - 아직 상대가 위에 걸쳐 있으면 **카운트가 이어진다**([TurnOutcome.PIN]).
+     */
+    private fun settleEscape(): TurnOutcome {
+        world.snapPerchPose()
+        val me = world.bodyOf(turn)
+        val holder = world.bodyOf(turn.other())
+        if (me.fallen) {
+            lastPinQuality = 0f
+            winner = turn.other()
+            phase = MatchPhase.FINISHED
+            lastOutcome = TurnOutcome.FELL
+            return TurnOutcome.FELL
+        }
+        if (holder.fallen) {
+            lastPinQuality = 0f
+            winner = turn
+            phase = MatchPhase.FINISHED
+            lastOutcome = TurnOutcome.ESCAPE
+            return TurnOutcome.ESCAPE
+        }
+        val held = holder.perchedOn == turn &&
+            world.overlapRatio(holder, me) >= Board.PIN_OVERLAP &&
+            holder.lean <= Board.PIN_MAX_LEAN
+        if (held) {
+            // 빠져나오지 못했다 — 위에 있는 쪽이 그대로 카운트를 이어 간다.
+            countSide = turn.other()
+            lastPinQuality = world.pinQualityFor(turn.other())
+            lastLean = holder.lean
+            phase = MatchPhase.COUNTING
+            lastOutcome = TurnOutcome.PIN
+            return TurnOutcome.PIN
+        }
+        lastPinQuality = 0f
+        lastOutcome = TurnOutcome.ESCAPE
         prepareNextTurn()
+        return TurnOutcome.ESCAPE
     }
 
     override fun aiVelocity(accuracy: Float, strikeOffset: Float): Vec2 {
         aiThrough++
         val noisyRandom = Random(random.nextLong() xor (aiThrough * 7919L))
+        // 깔려 있으면 올라타는 수가 아니라 옆으로 빠져나오는 수를 고른다.
+        if (isEscapeTurn) return escapeVelocity(accuracy)
         return EraserAi.choose(
             world = world,
             attacker = turn,
@@ -168,19 +232,58 @@ class WrestlingMatch(
     }
 
     /**
-     * 다음 턴을 준비한다. **자리를 처음으로 되돌리지 않고** 지금 책상 위 위치·자세를 이어 간다.
-     * (올라탄 자세만 풀고, 겹쳐 있으면 최소한만 떼어 놓는다.)
+     * 깔린 지우개가 빠져나오는 방향: 책상 안 여유가 가장 큰 쪽으로 비스듬히 밀어,
+     * 빠져나오면서도 책상 밖으로 떨어지지 않게 한다.
      */
-    private fun prepareNextTurn() {
+    private fun escapeVelocity(accuracy: Float): Vec2 {
+        val me = world.bodyOf(turn)
+        val center = Vec2(Board.WIDTH / 2f, Board.HEIGHT / 2f)
+        val toCenter = (center - me.pos).normalized()
+        val fallback = if (me.side == Side.PLAYER) Vec2(0f, -1f) else Vec2(0f, 1f)
+        val inward = if (toCenter.length() > 1e-3f) toCenter else fallback
+        val sideway = Vec2(-inward.y, inward.x)
+        // 양옆·안쪽 중 책상 안에 남은 여유가 가장 큰 쪽으로 빠져나온다.
+        val aim = listOf(sideway, sideway * -1f, inward).maxByOrNull { roomAhead(me, it) } ?: inward
+        val room = roomAhead(me, aim).coerceAtLeast(0f)
+        // 320 만큼만 밀면 깔림이 풀린다 — 더 밀어 책상 밖으로 떨어지지 않게 한다.
+        val travel = minOf(room * 0.55f, 320f)
+        val speed = kotlin.math.sqrt(2f * me.type.decel * travel)
+            .coerceAtMost(Board.MAX_FLICK_SPEED * (0.80f + 0.15f * accuracy))
+        return aim * speed
+    }
+
+    /** 그 방향으로 밀었을 때 지우개 중심이 책상 밖으로 나가기까지 남은 거리. */
+    private fun roomAhead(body: EraserBody, dir: Vec2): Float {
+        val tx = when {
+            dir.x > 1e-4f -> (Board.WIDTH - body.pos.x) / dir.x
+            dir.x < -1e-4f -> (0f - body.pos.x) / dir.x
+            else -> Float.MAX_VALUE / 4f
+        }
+        val ty = when {
+            dir.y > 1e-4f -> (Board.HEIGHT - body.pos.y) / dir.y
+            dir.y < -1e-4f -> (0f - body.pos.y) / dir.y
+            else -> Float.MAX_VALUE / 4f
+        }
+        return minOf(tx, ty) - body.radius - 40f
+    }
+
+    /**
+     * 다음 턴을 준비한다. **자리를 처음으로 되돌리지 않고** 지금 책상 위 위치·자세를 이어 간다.
+     *
+     * @param holdSide 이 쪽이 상대 위에 걸쳐 앉은 채로 다음 턴을 시작한다(깔린 쪽이 빠져나오기).
+     */
+    private fun prepareNextTurn(holdSide: Side? = null) {
         val player = world.player
         val ai = world.opponent
         for (body in listOf(player, ai)) {
             body.climbing = false
-            body.perchedOn = null
             body.contactCooldown = 0f
             body.overlap = 0f
-            body.z = 0f
-            body.lean = 0f
+            if (body.side != holdSide) {
+                body.perchedOn = null
+                body.z = 0f
+                body.lean = 0f
+            }
             if (body.fallen) {
                 // 떨어진 지우개는 자기 진영 가장자리로 다시 들어온다(다른 쪽은 그대로).
                 val reentry = if (body.side == Side.PLAYER) PLAYER_REENTRY else AI_REENTRY
@@ -190,11 +293,16 @@ class WrestlingMatch(
                 body.spinSpeed = 0f
                 body.tumble = 0f
                 body.fallen = false
+                if (body.side == holdSide) body.perchedOn = null
             }
         }
-        separateIfOverlapping()
+        // 깔린 상태를 이어 가는 턴에는 두 지우개를 떼어 놓지 않는다.
+        if (holdSide == null) separateIfOverlapping()
         turn = turn.other()
-        world.immovableSide = turn.other()
+        // 깔린 쪽이 미는 턴에는 두 지우개 모두 움직인다 — 위에 걸친 지우개도 밀려 떨어질 수 있다.
+        world.immovableSide = if (holdSide != null) null else turn.other()
+        world.holdEscape = holdSide != null
+        isEscapeTurn = holdSide != null
         countSide = null
         turnNumber++
         phase = MatchPhase.AIMING

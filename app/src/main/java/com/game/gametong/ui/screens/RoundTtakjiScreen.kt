@@ -55,6 +55,7 @@ import com.game.gametong.game.BlowWind
 import com.game.gametong.game.DistanceMatch
 import com.game.gametong.game.DistanceShot
 import com.game.gametong.game.RoundMode
+import com.game.gametong.game.RoundTtakjiHud
 import com.game.gametong.game.RoundTtakjiPhysics
 import com.game.gametong.game.Side
 import com.game.gametong.game.StickMatch
@@ -211,6 +212,23 @@ private fun StickGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         )
                         drawRoundTtakji(match.playerPos.x * sx, match.playerPos.y * sy, sx, Inks.Red, true)
                         drawRoundTtakji(match.aiPos.x * sx, match.aiPos.y * sy, sx, Inks.Blue, false)
+                        // 지난 수가 멈춘 자리(얇은 고리) — 벽까지 얼마나 남았는지 눈으로 본다.
+                        match.playerShot?.let { shot ->
+                            drawCircle(
+                                color = Inks.Red.copy(alpha = 0.55f),
+                                radius = RoundTtakjiPhysics.RADIUS * sx * 1.22f,
+                                center = Offset(shot.endPos.x * sx, shot.endPos.y * sy),
+                                style = Stroke(width = 2f),
+                            )
+                        }
+                        match.aiShot?.let { shot ->
+                            drawCircle(
+                                color = Inks.Blue.copy(alpha = 0.55f),
+                                radius = RoundTtakjiPhysics.RADIUS * sx * 1.22f,
+                                center = Offset(shot.endPos.x * sx, shot.endPos.y * sy),
+                                style = Stroke(width = 2f),
+                            )
+                        }
                         val start = dragStart
                         val now = dragNow
                         if (start != null && now != null) {
@@ -415,6 +433,9 @@ private fun DistanceGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val groundY = size.height * 0.9f
                         val s = size.width / 1000f
+                        // 거리 트랙: 0~DISTANCE_SPAN 을 화면 안에 담는다. 세로 눈금도 같은 배율을 써야
+                        // 포물선이 찌그러지지 않는다.
+                        val vs = RoundTtakjiHud.distanceScale(size.width)
                         // 땅
                         drawRect(
                             color = Color(0xFFB8CE8E),
@@ -422,14 +443,26 @@ private fun DistanceGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                             size = Size(size.width, size.height - groundY),
                         )
                         drawLine(Inks.Wood.copy(alpha = 0.5f), Offset(0f, groundY), Offset(size.width, groundY), 3f)
+                        // 10m 눈금(무대 320 단위 = 10m)
+                        var meters = 10
+                        while (meters * 32f <= RoundTtakjiHud.DISTANCE_SPAN) {
+                            val tx = RoundTtakjiHud.distanceX(meters * 32f, size.width)
+                            drawLine(
+                                color = Inks.Wood.copy(alpha = 0.28f),
+                                start = Offset(tx, groundY - 7f),
+                                end = Offset(tx, groundY + 7f),
+                                strokeWidth = 2f,
+                            )
+                            meters += 10
+                        }
                         // 런치패드
                         drawRect(
                             color = Inks.Red,
-                            topLeft = Offset(20f * s, groundY - 6f),
-                            size = Size(38f * s, 10f),
+                            topLeft = Offset(RoundTtakjiHud.distanceX(0f, size.width) - 8f * s, groundY - 6f),
+                            size = Size(16f * s, 10f),
                         )
-                        fun xOf(unit: Float) = (40f + unit * 0.46f) * s
-                        fun yOf(height: Float) = groundY - height * 0.46f * s
+                        fun xOf(unit: Float) = RoundTtakjiHud.distanceX(unit, size.width)
+                        fun yOf(height: Float) = groundY - height * vs
                         match.playerShot?.let { shot ->
                             drawShotArc(shot, match.wind, ::xOf, ::yOf, groundY, Inks.Red)
                         }
@@ -458,7 +491,7 @@ private fun DistanceGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         val st = dragStart
                         val nw = dragNow
                         if (st != null && nw != null) {
-                            val from = Offset(30f * s, groundY)
+                            val from = Offset(RoundTtakjiHud.distanceX(0f, size.width), groundY)
                             val rad = Math.toRadians(angle.toDouble())
                             val reach = (120f + power * 260f) * s
                             val to = Offset(
@@ -680,16 +713,32 @@ private fun BlowGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                         .border(3.dp, Inks.Wood, RoundedCornerShape(18.dp))
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val sx = size.width / 1000f
                         val sy = size.height / 640f
-                        val finishX = BlowMatch.FINISH * sx
-                        val endX = BlowMatch.TABLE_END * sx
+                        // 트랙(0..TABLE_END) 전체를 화면 안에 담는다 — 예전에는 1000 폭으로 나누어
+                        // 결승선을 넘긴 딱지가 오른쪽 밖으로 사라졌다.
+                        val trackScale = RoundTtakjiHud.blowScale(size.width)
+                        val startX = RoundTtakjiHud.blowX(BlowMatch.START.toFloat(), size.width)
+                        val finishX = RoundTtakjiHud.blowX(BlowMatch.FINISH.toFloat(), size.width)
+                        val endX = RoundTtakjiHud.blowX(BlowMatch.TABLE_END.toFloat(), size.width)
                         // 테이블
                         drawRect(
                             color = Color(0xFFCFAF7C),
                             topLeft = Offset(0f, 60f * sy),
                             size = Size(size.width, size.height - 90f * sy),
                         )
+                        // 100 단위 눈금
+                        var tick = 0f
+                        while (tick <= BlowMatch.TABLE_END) {
+                            val tx = RoundTtakjiHud.blowX(tick, size.width)
+                            val tall = (tick.toInt() % 500) == 0
+                            drawLine(
+                                color = Inks.Wood.copy(alpha = if (tall) 0.38f else 0.18f),
+                                start = Offset(tx, 72f * sy),
+                                end = Offset(tx, size.height - 34f * sy),
+                                strokeWidth = if (tall) 2.5f else 1.5f,
+                            )
+                            tick += 100f
+                        }
                         drawLine(
                             color = Inks.Green,
                             start = Offset(finishX, 70f * sy),
@@ -697,14 +746,36 @@ private fun BlowGameScreen(twoPlayer: Boolean, onExit: () -> Unit) {
                             strokeWidth = 8f,
                         )
                         drawLine(
-                            color = Inks.Wood.copy(alpha = 0.35f),
+                            color = Inks.Wood.copy(alpha = 0.45f),
                             start = Offset(endX, 70f * sy),
                             end = Offset(endX, size.height - 30f * sy),
                             strokeWidth = 3f,
                             pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
                         )
-                        drawRoundTtakjiSmall(match.playerPos * sx, 240f * sy, sx, Inks.Red)
-                        drawRoundTtakjiSmall(match.aiPos * sx, 440f * sy, sx, Inks.Blue)
+                        // 출발 자리와 지금까지 밀린 자리
+                        drawLine(
+                            color = Inks.Wood.copy(alpha = 0.30f),
+                            start = Offset(startX, 70f * sy),
+                            end = Offset(startX, size.height - 30f * sy),
+                            strokeWidth = 2f,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 8f)),
+                        )
+                        val playerX = RoundTtakjiHud.blowX(match.playerPos, size.width)
+                        val aiX = RoundTtakjiHud.blowX(match.aiPos, size.width)
+                        drawLine(
+                            color = Inks.Red.copy(alpha = 0.22f),
+                            start = Offset(startX, 240f * sy),
+                            end = Offset(playerX, 240f * sy),
+                            strokeWidth = 10f,
+                        )
+                        drawLine(
+                            color = Inks.Blue.copy(alpha = 0.22f),
+                            start = Offset(startX, 440f * sy),
+                            end = Offset(aiX, 440f * sy),
+                            strokeWidth = 10f,
+                        )
+                        drawRoundTtakjiSmall(playerX, 240f * sy, trackScale, Inks.Red)
+                        drawRoundTtakjiSmall(aiX, 440f * sy, trackScale, Inks.Blue)
                     }
                 }
 

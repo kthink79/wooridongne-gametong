@@ -173,4 +173,33 @@ class RoundTtakjiTest {
         assertTrue(shot.strength > 0.5f)
         assertTrue(match.aiPos > BlowMatch.START)
     }
+
+    // ── 화면 배치(트랙 좌표) ─────────────────────────────────────────
+
+    @Test
+    fun `입바람 트랙 전체가 화면 안에 들어온다`() {
+        val w = 1000f
+        val start = RoundTtakjiHud.blowX(BlowMatch.START.toFloat(), w)
+        val finish = RoundTtakjiHud.blowX(BlowMatch.FINISH.toFloat(), w)
+        val end = RoundTtakjiHud.blowX(BlowMatch.TABLE_END.toFloat(), w)
+        assertEquals(w * RoundTtakjiHud.MARGIN, RoundTtakjiHud.blowX(0f, w), 0.5f)
+        assertEquals(w * (1f - RoundTtakjiHud.MARGIN), end, 0.5f)
+        assertTrue("테이블 끝 $end 는 화면 안", end < w)
+        assertTrue("출발 $start < 결승선 $finish", start < finish)
+        assertTrue("결승선 $finish < 테이블 끝 $end", finish < end)
+        // 예전에는 1000 폭으로 나누어 1080 자리(테이블 끝)가 화면 밖이었다.
+        assertTrue(RoundTtakjiHud.blowX(1080f, w) <= w)
+    }
+
+    @Test
+    fun `멀리 날리기 최대 비거리도 화면 안에 담긴다`() {
+        val w = 720f
+        val maxX = RoundTtakjiHud.distanceX(RoundTtakjiHud.DISTANCE_SPAN, w)
+        assertEquals(w * (1f - RoundTtakjiHud.MARGIN), maxX, 0.5f)
+        assertTrue(maxX <= w)
+        // 바람이 최대로 밀어도 트랙 안에 들어온다.
+        val shot = DistanceMatch(twoPlayer = true, random = Random(1)).shoot(Side.PLAYER, 45f, 1f)
+        assertTrue("최대 비거리 ${shot.distance}", shot.distance < RoundTtakjiHud.DISTANCE_SPAN)
+        assertTrue(RoundTtakjiHud.distanceX(shot.distance, w) in 0f..w)
+    }
 }

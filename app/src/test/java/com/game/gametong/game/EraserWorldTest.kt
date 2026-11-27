@@ -2,6 +2,7 @@ package com.game.gametong.game
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -214,5 +215,52 @@ class EraserWorldTest {
         val w = world()
         w.player.fallen = true
         assertEquals(0f, w.pinRatioFor(Side.PLAYER), 0.0001f)
+    }
+
+    // ── 세로 서기(tumble) · 세워진 지우개 위 올라타기 ─────────────────
+
+    @Test
+    fun `세워진 지우개는 멈추면 넘어져 눕는다`() {
+        val w = world()
+        w.player.tumble = 90f
+        assertTrue("90도는 세워진 자세", w.player.standing)
+        var guard = 0
+        while (!w.settled && guard < 1200) {
+            w.step()
+            guard++
+        }
+        assertTrue("넘어지지 않고 서서 굳으면 안 된다: ${w.player.tumble}", guard < 1200)
+        assertFalse("세워진 채로 남으면 안 된다", w.player.standing)
+        val flat = w.player.tumblePose
+        assertTrue("눕는 자세(180도 배수)여야 한다: ${w.player.tumble}", flat < 1f || flat > 179f)
+    }
+
+    @Test
+    fun `세워진 지우개 위로는 올라탈 수 없다`() {
+        // 세워진 지우개 바로 앞에서 밀어 올라타기를 시도한다(서 있는 동안에 닿게).
+        val w = EraserWorld(
+            player = EraserBody(Side.PLAYER, EraserType.STANDARD, Vec2(500f, 800f), Vec2(500f, 800f)),
+            opponent = EraserBody(Side.AI, EraserType.STANDARD, Vec2(500f, 540f), Vec2(500f, 540f)),
+        )
+        w.immovableSide = Side.AI
+        w.opponent.tumble = 90f
+        w.flick(Side.PLAYER, Vec2(0f, -1000f))
+        w.settle()
+        assertNull("세워진 지우개 위에 걸쳐 앉으면 안 된다", w.player.perchedOn)
+        assertEquals(0f, w.pinQualityFor(Side.PLAYER), 0.0001f)
+    }
+
+    @Test
+    fun `세워진 지우개에 부딪히면 받침을 잃고 넘어진다`() {
+        val w = EraserWorld(
+            player = EraserBody(Side.PLAYER, EraserType.STANDARD, Vec2(500f, 800f), Vec2(500f, 800f)),
+            opponent = EraserBody(Side.AI, EraserType.STANDARD, Vec2(500f, 540f), Vec2(500f, 540f)),
+        )
+        w.immovableSide = Side.AI
+        w.opponent.tumble = 90f
+        w.flick(Side.PLAYER, Vec2(0f, -1000f))
+        w.settle()
+        assertFalse("맞은 지우개는 넘어져 있어야 한다: ${w.opponent.tumble}", w.opponent.standing)
+        assertTrue("부딪힌 세기가 남아 있어야 한다: ${w.lastImpact}", w.lastImpact > 100f)
     }
 }

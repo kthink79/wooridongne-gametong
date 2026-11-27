@@ -18,6 +18,16 @@ class WrestlingMatchTest {
         m.settleFlick()
     }
 
+    /** 깔린 AI가 자기 턴에 옆으로 밀고 빠져나온다. */
+    private fun aiEscapes(m: WrestlingMatch) {
+        assertTrue("깔린 쪽의 턴이어야 한다", m.isEscapeTurn)
+        assertEquals(Side.AI, m.turn)
+        m.flick(Vec2(0f, 760f))
+        m.world.settle()
+        assertEquals(TurnOutcome.ESCAPE, m.settleFlick())
+        assertFalse(m.isEscapeTurn)
+    }
+
     @Test
     fun `시작은 내 턴이고 조준 대기 상태다`() {
         val m = match()
@@ -80,7 +90,12 @@ class WrestlingMatchTest {
             m.world.settle()
             assertEquals(TurnOutcome.PIN, m.settleFlick())
             m.applyCount()
-            if (m.phase != MatchPhase.FINISHED) burnAiTurn(m)
+            if (m.phase != MatchPhase.FINISHED) {
+                aiEscapes(m)
+                // 다음 수의 조건을 같게 두려고 두 지우개를 시직 자리로 돌려 놓는다(테스트 설정).
+                m.world.player.pos = WrestlingMatch.PLAYER_HOME
+                m.world.opponent.pos = WrestlingMatch.AI_HOME
+            }
         }
         assertEquals(3, m.playerCounts)
         assertEquals(Side.PLAYER, m.winner)
@@ -96,10 +111,10 @@ class WrestlingMatchTest {
         val perched = m.world.player.pos
         m.settleFlick()
         m.applyCount()
-        // 올라탄 자리는 풀리지만, 두 지우개 모두 처음 홈으로 되돌아가지는 않는다.
+        // 깔린 지우개는 저절로 풀려나지 않는다 — 위에 걸친 자리 그대로 다음 턴이 이어진다.
         assertFalse(m.world.player.fallen)
-        assertNull(m.world.player.perchedOn)
-        assertEquals(0f, m.world.player.z, 0.001f)
+        assertEquals("위에 걸쳐 있어야 한다", Side.AI, m.world.player.perchedOn)
+        assertTrue("들린 높이 ${m.world.player.z}", m.world.player.z > 1f)
         assertTrue(
             "플레이어가 홈으로 돌아가면 안 된다: ${m.world.player.pos}",
             m.world.player.pos != WrestlingMatch.PLAYER_HOME,
@@ -108,7 +123,66 @@ class WrestlingMatchTest {
             "지나간 자리 근처에서 이어져야 한다: $perched -> ${m.world.player.pos}",
             m.world.player.pos.distanceTo(perched) < 320f,
         )
-        assertEquals(Side.AI, m.turn)
+        assertEquals("깔린 쪽(AI)이 턴을 받는다", Side.AI, m.turn)
+        assertTrue("빠져나오기 턴이다", m.isEscapeTurn)
+    }
+
+    @Test
+    fun `깔린 채 시작하는 턴에는 두 지우개를 떼어 놓지 않는다`() {
+        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        m.settleFlick()
+        m.applyCount()
+        val contact = m.world.player.radius + m.world.opponent.radius
+        val dist = m.world.player.pos.distanceTo(m.world.opponent.pos)
+        assertTrue("겹친 채로 이어져야 한다: $dist < $contact", dist < contact - 10f)
+    }
+
+    @Test
+    fun `밑에서 밀어 빠져나오면 깔림이 풀리고 상대 턴이 된다`() {
+        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        m.settleFlick()
+        m.applyCount()
+        aiEscapes(m)
+        assertEquals("빠져나온 뒤에는 상대(플레이어) 턴", Side.PLAYER, m.turn)
+        assertEquals(null, m.world.player.perchedOn)
+        assertTrue("밀려 떨어진 지우개는 책상 위에 있다", !m.world.player.fallen)
+    }
+
+    @Test
+    fun `깔린 AI는 올라타지 않고 빠져나오는 쪽으로 친다`() {
+        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        m.settleFlick()
+        m.applyCount()
+        assertTrue(m.isEscapeTurn)
+        val v = m.aiVelocity(0.82f)
+        assertTrue("빠져나올 만큼은 세게: ${v.length()}", v.length() > 700f)
+        m.flick(v)
+        m.world.settle()
+        assertEquals(TurnOutcome.ESCAPE, m.settleFlick())
+        assertFalse(m.isEscapeTurn)
+    }
+
+    @Test
+    fun `빠져나오지 못하면 위에 있는 쪽 카운트가 이어진다`() {        val m = match()
+        m.flick(Vec2(0f, -1000f))
+        m.world.settle()
+        assertEquals(TurnOutcome.PIN, m.settleFlick())
+        m.applyCount()
+        val before = m.playerCounts
+        // 거의 움직이지 못하면 그대로 깔린 채다 — 위에 있는 쪽이 다시 카운트.
+        m.flick(Vec2(0f, 60f))
+        m.world.settle()
+        assertEquals(TurnOutcome.PIN, m.settleFlick())
+        assertEquals(MatchPhase.COUNTING, m.phase)
+        assertEquals(Side.PLAYER, m.countSide)
+        m.applyCount()
+        assertEquals(before + 1, m.playerCounts)
     }
 
     @Test
@@ -120,8 +194,13 @@ class WrestlingMatchTest {
         m.applyCount()
         assertEquals(Side.AI, m.turn)
         assertTrue(m.isAiTurn)
-        // AI 차례에는 수비(플레이어)가 고정된다
-        assertEquals(Side.PLAYER, m.world.immovableSide)
+        // 깔린 채로 시작하는 턴에는 두 지우개가 모두 움직인다(위의 지우개를 밀어낼 수 있다).
+        assertTrue(m.isEscapeTurn)
+        assertNull(m.world.immovableSide)
+        aiEscapes(m)
+        assertEquals(Side.PLAYER, m.turn)
+        // 빠져나온 뒤 플레이어 차례에는 수비(AI)가 고정된다
+        assertEquals(Side.AI, m.world.immovableSide)
     }
 
     @Test
@@ -140,11 +219,14 @@ class WrestlingMatchTest {
         m.settleFlick()
         m.applyCount()
         assertEquals(Side.AI, m.turn)
-        // 상대가 닿지 않게만 밀면 차례가 돌아온다.
+        // 깔린 AI가 빠져나오면 차례가 다시 돌아온다.
+        aiEscapes(m)
+        assertEquals(Side.PLAYER, m.turn)
+        // 상대가 닿지 않게만 밀면 차례가 넘어간다.
         m.flick(Vec2(0f, 180f))
         m.world.settle()
         m.settleFlick()
-        assertEquals(Side.PLAYER, m.turn)
+        assertEquals(Side.AI, m.turn)
     }
 
     @Test

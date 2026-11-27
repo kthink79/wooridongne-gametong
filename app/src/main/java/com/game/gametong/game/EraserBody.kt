@@ -64,6 +64,29 @@ data class EraserBody(
     /** 지금 공중에 떠 있는가. */
     val airborne: Boolean get() = z > 0.5f
 
+    /**
+     * 넘어간 각을 0~180 으로 접은 자세.
+     * 0 = 넓은 면이 책상에 닿은 눕힌 자세, 90 = 가장자리로 세워진 자세.
+     */
+    val tumblePose: Float get() = ((tumble % 180f) + 180f) % 180f
+
+    /**
+     * 가장자리로 **세워져** 있는가(넓은 면이 수직).
+     *
+     * 지우개는 두께 4cm 남짓한 좁은 받침으로 세로로 서면 오래 버티지 못한다.
+     * 세워진 채로는 상대가 윗면에 올라탈 수도 없다([EraserWorld.handleClimb]).
+     */
+    val standing: Boolean get() = tumblePose > 45f && tumblePose < 135f
+
+    /** 세워졌을 때의 높이(무대 단위). 눕혀 있으면 두께. */
+    val standingHeight: Float get() = if (standing) blockDepth else blockHeight
+
+    /** 바닥에 닿는 받침의 짧은 폭(무대 단위) — 설 수 있는 면. */
+    val footprintWidth: Float get() = if (standing) blockHeight else blockDepth
+
+    /** 놓인 면이 반듯한가(180도 배수 근처). 멈췄다는 판정에 쓴다. */
+    val faceFlat: Boolean get() = tumblePose < 0.5f || tumblePose > 179.5f
+
     /** 상대 위에 걸쳐 있는가. */
     val perched: Boolean get() = perchedOn != null
 
@@ -84,13 +107,27 @@ data class EraserBody(
         dyn.reset()
     }
 
-    fun isResting(): Boolean = fallen || vel.length() <= 1e-3f || (perched && vel.length() <= Board.REST_SPEED)
+    fun isResting(): Boolean {
+        if (fallen) return true
+        val slow = vel.length() <= 1e-3f || (perched && vel.length() <= Board.REST_SPEED)
+        if (!slow) return false
+        // 상대 위에 걸쳐 있으면 높이 떠 있어도 멈춘 것이다.
+        if (perched) return true
+        // 세워진 지우개·아직 내려오는 중인 지우개는 멈춘 것이 아니다(넘어지거나 내려와야 끝난다).
+        return !standing && faceFlat && z < 1f
+    }
 
-    /** 바닥에 놓인 면이 정확히 90도 배수가 되도록 정리한 각. */
-    fun settledTumble(): Float = (tumble / 90f).roundToInt() * 90f
+    /** 바닥에 눕는 자세(넓은 면이 책상에 닿는 180도 배수 각). */
+    fun settledTumble(): Float = (tumble / 180f).roundToInt() * 180f
 
-    /** 멈출 때 바닥에 놓인 면이 반듯해지도록 텀블 각을 90도 배수로 맞춘다. */
+    /**
+     * 세워진 채 멈추려 할 때 **넘어가던 쪽으로 계속 넘어져** 눕는 각.
+     * 90도에서 멈추면 그대로 서 있는 것이 아니라 180도(눕는 자세)까지 넘어진다.
+     */
+    fun toppleTumble(): Float = kotlin.math.ceil(tumble / 180f) * 180f
+
+    /** 멈출 때 바닥에 놓인 면이 반듯해지도록 텀블 각을 180도 배수로 맞춘다. */
     fun snapTumble() {
-        tumble = settledTumble()
+        tumble = if (standing) toppleTumble() else settledTumble()
     }
 }

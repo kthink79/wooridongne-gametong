@@ -49,6 +49,9 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
 
     private var lastError: String? = null
 
+    /** 이번 프레임 카메라~무대 중심 거리(안개 시작 거리를 여기서 잡는다). */
+    private var frameCameraDistance = 1f
+
     val aspect: Float get() = if (viewHeight <= 0) 1f else viewWidth.toFloat() / viewHeight
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -70,7 +73,7 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
             listOf(
                 "uModel", "uViewProj", "uNormalMat", "uUvScale", "uTex", "uUseTex", "uColor",
                 "uSunDir", "uSunColor", "uAmbSky", "uAmbGround", "uCamera", "uHazeColor",
-                "uHazeRange", "uSpecular", "uShininess", "uRim", "uGloss", "uUnlit",
+                "uHazeRange", "uHazeStrength", "uSpecular", "uShininess", "uRim", "uGloss", "uUnlit",
                 "uChalk", "uChalkColor",
             ),
         )
@@ -113,6 +116,7 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
 
         val viewProj = scene.camera.viewProjection(aspect)
         val eye = scene.camera.eye
+        frameCameraDistance = (scene.camera.eye - scene.camera.target).length.coerceAtLeast(0.001f)
 
         drawSky(scene, viewProj)
         drawGround(scene, viewProj, eye)
@@ -317,7 +321,10 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
             program.uniform("uHazeColor"),
             env.hazeColor.r, env.hazeColor.g, env.hazeColor.b,
         )
-        GLES20.glUniform2f(program.uniform("uHazeRange"), 8f, 26f)
+        // 안개 범위는 카메라 거리에서 잡는다 — 무대 안(세로 화면의 가까운 앞쪽~먼 모서리)은 걷힌다.
+        val hazeRange = Haze.rangeFor(frameCameraDistance, env)
+        GLES20.glUniform2f(program.uniform("uHazeRange"), hazeRange[0], hazeRange[1])
+        GLES20.glUniform1f(program.uniform("uHazeStrength"), env.hazeStrength)
         GLES20.glUniform1f(program.uniform("uUnlit"), if (unlit) 1f else 0f)
         val chalkValue = chalk ?: floatArrayOf(0f, 0f, 0f, 0f)
         GLES20.glUniform4f(

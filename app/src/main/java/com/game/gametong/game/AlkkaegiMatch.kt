@@ -129,7 +129,12 @@ class AlkkaegiMatch(
 
     companion object {
         const val ROUNDS_TO_WIN = 2
-        val PLAYER_HOME = Vec2(500f, 970f)
-        val AI_HOME = Vec2(500f, 530f)
+
+        /**
+         * 시작 자리. 책상 양 끝 쪽으로 충분히 벌려(간격 860) 첫 수에 바로 부딪히지 않고
+         * 각도·힘을 겨냥할 여유를 둔다. 지우개 반지름(122)만큼은 책상 안에 남긴다.
+         */
+        val PLAYER_HOME = Vec2(500f, 1180f)
+        val AI_HOME = Vec2(500f, 320f)
     }
 }

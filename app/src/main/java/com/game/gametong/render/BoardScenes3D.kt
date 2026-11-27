@@ -23,19 +23,19 @@ object TtakjiScene3D {
         skyTop = Color4.rgb(0xF2D6A8),
         skyBottom = Color4.rgb(0xDFB073),
         sunDir = Vec3(-0.55f, -0.62f, -0.56f).normalized(),
-        sunColor = Color4(1.0f, 0.80f, 0.55f, 1f),
-        ambientSky = Color4(0.44f, 0.44f, 0.48f, 1f),
-        ambientGround = Color4(0.42f, 0.34f, 0.24f, 1f),
+        sunColor = Color4(1.0f, 0.84f, 0.60f, 1f),
+        ambientSky = Color4(0.52f, 0.52f, 0.56f, 1f),
+        ambientGround = Color4(0.50f, 0.40f, 0.28f, 1f),
         hazeColor = Color4.rgb(0xE0BE8C),
-        hazeStrength = 0.28f,
-        vignette = 0.30f,
+        hazeStrength = 0.20f,
+        vignette = 0.20f,
         sunGlow = 0.65f,
     )
 
-    private val mineColor = Color4.rgb(0x2B4CA8)
-    private val mineFold = Color4.rgb(0x4E6FD0)
-    private val theirsColor = Color4.rgb(0xE0B01F)
-    private val theirsFold = Color4.rgb(0xC7402C)
+    private val mineColor = Color4.rgb(0x2F55C8)
+    private val mineFold = Color4.rgb(0x5B80E2)
+    private val theirsColor = Color4.rgb(0xF5C41E)
+    private val theirsFold = Color4.rgb(0xD2482E)
 
     /** 딱지 자세: 경첩축으로 들리고, 수직으로 돌고, 옆으로 기운다. */
     fun quatOf(pose: TtakjiPose): Quat {
@@ -235,12 +235,12 @@ object MarbleScene3D {
         skyTop = Color4.rgb(0xF6D9A0),
         skyBottom = Color4.rgb(0xE0985A),
         sunDir = Vec3(-0.30f, -0.46f, -0.84f).normalized(),
-        sunColor = Color4(1.0f, 0.72f, 0.42f, 1f),
-        ambientSky = Color4(0.40f, 0.40f, 0.50f, 1f),
-        ambientGround = Color4(0.46f, 0.32f, 0.20f, 1f),
+        sunColor = Color4(1.0f, 0.78f, 0.50f, 1f),
+        ambientSky = Color4(0.48f, 0.48f, 0.58f, 1f),
+        ambientGround = Color4(0.52f, 0.38f, 0.24f, 1f),
         hazeColor = Color4.rgb(0xE6B57E),
-        hazeStrength = 0.30f,
-        vignette = 0.34f,
+        hazeStrength = 0.22f,
+        vignette = 0.24f,
         sunGlow = 0.95f,
     )
 

@@ -210,10 +210,11 @@ fun EraserBattleScreen(
                                     }
                                     TurnOutcome.SLIP ->
                                         "비스듬히 걸쳐만 있었다 — 상대가 빠져나왔다 (기울기 ${match.lastLean.roundToInt()}도)"
+                                    TurnOutcome.ESCAPE -> "밑에서 밀어내고 빠져나왔다"
                                     TurnOutcome.FELL -> "링아웃! 지우개가 책상 밖으로 떨어졌다"
                                     else -> null
                                 }
-                                if (lastOutcome == TurnOutcome.SLIP) {
+                                if (lastOutcome == TurnOutcome.SLIP || lastOutcome == TurnOutcome.ESCAPE) {
                                     banner = "빠져나왔다!"
                                 }
                             }
@@ -472,6 +473,7 @@ fun EraserBattleScreen(
                 lastOutcome = lastOutcome,
                 lastPinInfo = lastPinInfo,
                 surface = surface,
+                pinnedUnder = (match as? WrestlingMatch)?.isEscapeTurn == true,
             )
         }
 
@@ -574,6 +576,7 @@ private fun BattleFooter(
     lastOutcome: TurnOutcome?,
     lastPinInfo: String?,
     surface: DeskSurface,
+    pinnedUnder: Boolean = false,
 ) {
     Column(
         modifier = Modifier
@@ -583,6 +586,9 @@ private fun BattleFooter(
     ) {
         Text(
             text = when {
+                canAim && pinnedUnder && turnNow == Side.PLAYER ->
+                    "깔려 있다! — 옆으로 세게 밀어 상대를 떼어 내세요"
+                canAim && pinnedUnder && twoPlayer -> "2P가 깔려 있다 — 옆으로 밀어 빠져나오세요"
                 canAim && turnNow == Side.PLAYER -> "내 차례 — 지우개 가장자리를 눌러 밀어내세요"
                 canAim && twoPlayer -> "2P 차례 — 기기를 넘겨받고 가장자리를 누르세요"
                 else -> "상대가 겨냥하는 중…"
@@ -609,7 +615,10 @@ private fun BattleFooter(
             when {
                 lastOutcome == TurnOutcome.PIN -> lastPinInfo ?: "걸쳐 앉았다! 카운트!"
                 lastOutcome == TurnOutcome.SLIP -> lastPinInfo ?: "비스듬히 걸쳐만 있었다 — 빠져나왔다"
+                lastOutcome == TurnOutcome.ESCAPE -> lastPinInfo ?: "밑에서 밀어내고 빠져나왔다"
                 lastOutcome == TurnOutcome.FELL -> "링아웃 — 지우개가 책상 밖으로 떨어졌다"
+                mode == EraserMode.WRESTLING && pinnedUnder ->
+                    "상대가 위에 걸쳐 있다 — 아래에서 밀어 떨어뜨리거나 빠져나오면 풀립니다"
                 mode == EraserMode.WRESTLING ->
                     "${surface.hint} · 걸쳐 앉으면 1카운트"
                 else ->

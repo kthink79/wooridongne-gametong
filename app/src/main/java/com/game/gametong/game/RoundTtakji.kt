@@ -97,6 +97,44 @@ object RoundTtakjiPhysics {
     }
 }
 
+/**
+ * 동그란 딱지 화면 좌표 도우미.
+ *
+ * 놀이판 수치를 캔버스 픽셀로 바꿀 때 세 화면이 같은 여백·눈금 규칙을 쓰게 한다.
+ * 예전에는 입바람 판을 1000 폭으로 나누어 그렸는데 실제 트랙은 1080([BlowMatch.TABLE_END])이라
+ * 결승선을 넘긴 딱지가 화면 오른쪽 밖으로 사라졌다. 이제 트랙 전체가 화면 안에 들어온다.
+ */
+object RoundTtakjiHud {
+    /** 캔버스 좌우 여백(폭 대비 비율). */
+    const val MARGIN = 0.07f
+
+    /** 멀리 날리기에서 화면에 담는 최대 비거리(무대 단위). */
+    const val DISTANCE_SPAN = 2400f
+
+    /** 0..[length] 를 캔버스 [width] 안(좌우 여백 제외)에 매핑한다. */
+    fun trackX(value: Float, width: Float, length: Float): Float {
+        val m = width * MARGIN
+        val usable = (width - 2f * m).coerceAtLeast(1f)
+        val t = (value / length.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        return m + t * usable
+    }
+
+    /** 입바람 트랙(0..[BlowMatch.TABLE_END]). */
+    fun blowX(pos: Float, width: Float): Float =
+        trackX(pos, width, BlowMatch.TABLE_END.toFloat())
+
+    /** 입바람 트랙에서 1 무대 단위가 차지하는 픽셀(지우개 크기 계산용). */
+    fun blowScale(width: Float): Float =
+        (width - 2f * width * MARGIN).coerceAtLeast(1f) / BlowMatch.TABLE_END
+
+    /** 멀리 날리기 비거리 → 캔버스 x. */
+    fun distanceX(distance: Float, width: Float): Float = trackX(distance, width, DISTANCE_SPAN)
+
+    /** 멀리 날리기 트랙에서 1 무대 단위가 차지하는 픽셀. */
+    fun distanceScale(width: Float): Float =
+        (width - 2f * width * MARGIN).coerceAtLeast(1f) / DISTANCE_SPAN
+}
+
 /** 붙여먹기 결과. */
 data class StickShot(
     val side: Side,

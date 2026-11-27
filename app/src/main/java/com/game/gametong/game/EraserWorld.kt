@@ -29,6 +29,12 @@ class EraserWorld(
     var lastImpact: Float = 0f
         private set
 
+    /**
+     * 깔린 쪽이 빠져나오는 턴인가.
+     * 이때는 위에 걸친 지우개를 붙잡아 두지 않고, 아래 지우개가 빠져나가면 같이 떨어진다.
+     */
+    var holdEscape: Boolean = false
+
     /** 이번 스텝에서 부딪힌 세기. 가루 파티클을 이 값으로 터뜨린다. */
     var lastStepImpact: Float = 0f
         private set
@@ -39,6 +45,7 @@ class EraserWorld(
     fun defenderOf(attacker: Side): EraserBody = bodyOf(attacker.other())
 
     fun copy(): EraserWorld = EraserWorld(player.copy(), opponent.copy(), immovableSide, surface, strikeOffset)
+        .also { it.holdEscape = holdEscape }
 
     val settled: Boolean get() = bodies.all { it.isResting() }
 
@@ -96,6 +103,28 @@ class EraserWorld(
         handleContact()
         for (body in bodies) checkFall(body)
         updateDynamics(dt)
+        for (body in bodies) settlePose(body, dt)
+    }
+
+    /**
+     * 멈춘 지우개의 자세를 마무리한다.
+     *
+     * - 세워진 지우개는 좁은 받침으로 서 있을 수 없다 → 넘어가던 쪽으로 계속 넘어져 눕는다.
+     * - 상대 위에 걸쳐 있지 않으면서 떠 있으면(맞고 튀어 오른 뒤) 책상으로 내려온다.
+     *
+     * 수비(immovableSide)처럼 움직이지 않는 지우개도 넘어지도록 모든 지우개에 적용한다.
+     */
+    private fun settlePose(body: EraserBody, dt: Float) {
+        if (body.fallen || body.perched || body.climbing) return
+        val still = body.vel.length() <= 1e-3f
+        if (still) {
+            // 서 있으면 넘어가던 쪽으로 계속 넘어지고, 아니면 가까운 면으로 눕는다.
+            val target = if (body.standing) body.toppleTumble() else body.settledTumble()
+            body.tumble += (target - body.tumble) * minOf(1f, 12f * dt)
+        }
+        if (immovableSide == body.side && body.z > 0f) {
+            body.z += (0f - body.z) * minOf(1f, 9f * dt)
+        }
     }
 
     /**
@@ -180,6 +209,24 @@ class EraserWorld(
         body.spinSpeed *= 0.25f
     }
 
+    /**
+     * 걸쳐 있던 지우개를 **떼어 내어 떨어뜨린다**(빠져나오기·세워진 지우개 위에서).
+     * [slipOff] 와 달리 즉시 바닥에 붙이지 않고 지금 높이에서 내려오게 해, 던져진 것처럼 보인다.
+     */
+    fun knockOff(side: Side) {
+        val body = bodyOf(side)
+        val other = defenderOf(side)
+        if (body.perchedOn == null) return
+        body.perchedOn = null
+        body.climbing = false
+        body.lean = 0f
+        body.z = maxOf(body.z, other.blockHeight * 0.55f)
+        val away = (body.pos - other.pos).normalized()
+        val dir = if (away.length() > 0f) away else Vec2(1f, 0f)
+        body.vel = body.vel + dir * 260f
+        body.spinSpeed += 40f
+    }
+
     private fun advance(body: EraserBody, dt: Float) {
         var decel = body.type.decel * surface.frictionMul
         val other = defenderOther(body)
@@ -212,11 +259,8 @@ class EraserWorld(
         } else if (distance > 0.01f) {
             body.tumble += distance / (body.type.radius * 2f) * 90f
             updatePerch(body, other, dt)
-        } else {
-            // 멈추면 바닥에 놓인 면이 반듯해진다
-            val target = body.settledTumble()
-            body.tumble += (target - body.tumble) * minOf(1f, 14f * dt)
         }
+        // 멈춘 뒤의 자세 정리는 [settlePose] 가 맡는다(세워진 지우개를 넘어뜨린다).
 
         // 회전이 궤적을 휜다(매끈한 표면에서 크게 휜다). 속도는 유지하고 방향만 돌린다.
         if (abs(body.spinSpeed) > 1f && body.vel.length() > 1f) {
@@ -247,6 +291,11 @@ class EraserWorld(
      */
     private fun updatePerch(body: EraserBody, other: EraserBody, dt: Float) {
         if (body.perchedOn == null || other.fallen) return
+        // 세워진 지우개 위에는 걸쳐 있을 수 없다 — 곧 미끄러져 내려온다.
+        if (other.standing) {
+            knockOff(body.side)
+            return
+        }
         val offset = body.pos - other.pos
         val d = offset.length()
         val radius = other.radius.coerceAtLeast(1f)
@@ -255,7 +304,8 @@ class EraserWorld(
         body.overlap = overlap
 
         // 윗면 밖으로 밀려나지 않게 부드럽게 붙잡는다(순간이동 없이 조금씩).
-        val limit = radius * 1.06f
+        // 깔린 쪽이 빠져나오는 턴에는 받침이 좁아져, 아래 지우개가 빠져나가면 떨어진다.
+        val limit = radius * (if (holdEscape) 0.72f else 1.06f)
         if (d > limit && d > 1e-3f) {
             val back = (d - limit) * minOf(1f, 12f * dt)
             body.pos = body.pos - offset * (back / d)
@@ -267,7 +317,12 @@ class EraserWorld(
         body.z += (zTarget - body.z) * minOf(1f, 12f * dt)
 
         // 무게중심이 가장자리를 완전히 벗어났다 → 걸치지 못하고 내려간다.
-        if (ratio > 1.24f) slipOff(body.side)
+        if (holdEscape) {
+            // 빠져나오는 턴: 아래 지우개가 빠져나가면 받침을 잃고 떨어진다.
+            if (ratio > 1.0f) knockOff(body.side)
+        } else if (ratio > 1.24f) {
+            slipOff(body.side)
+        }
     }
 
     /**
@@ -312,6 +367,8 @@ class EraserWorld(
         val b = opponent
         if (a.fallen || b.fallen) return
         if (a.contactCooldown > 0f || b.contactCooldown > 0f) return
+        // 깔린 쪽이 빠져나오는 동안에는 두 지우개가 **위아래로 겹쳐** 있다 — 옆충돌로 떼어 놓지 않는다.
+        if (holdEscape) return
 
         val delta = b.pos - a.pos
         val dist = maxOf(delta.length(), 0.001f)
@@ -330,6 +387,11 @@ class EraserWorld(
 
     private fun handleClimb(attacker: EraserBody, defender: EraserBody) {
         if (attacker.climbing || attacker.perchedOn != null) return
+        // 세워진 지우개는 윗면(받침)이 거의 없는 좁은 모서리다 — 올라탈 수 없고, 부딪히면 넘어진다.
+        if (defender.standing) {
+            toppleStanding(attacker, defender)
+            return
+        }
         val outward = (attacker.pos - defender.pos).normalized()
         if (outward.length() < 1e-3f) return
         val approach = -attacker.vel.dot(outward)
@@ -362,6 +424,34 @@ class EraserWorld(
                 attacker.vel = attacker.vel * 0.85f
             }
         }
+    }
+
+    /**
+     * 세워진 지우개에 부딪혔을 때.
+     * 올라타지 않고 튕겨 나오며, 맞은 지우개는 받침을 잃고 넘어간다(넘어가던 쪽으로 계속).
+     */
+    private fun toppleStanding(attacker: EraserBody, defender: EraserBody) {
+        val outward = (attacker.pos - defender.pos).normalized()
+        val impact = if (outward.length() > 1e-3f) maxOf(0f, -attacker.vel.dot(outward)) else 0f
+        lastImpact = maxOf(lastImpact, impact)
+        lastStepImpact = maxOf(lastStepImpact, impact)
+        attacker.contactCooldown = 0.20f
+        defender.contactCooldown = 0.20f
+        // 파고들지 않게 접점까지만 떼어 놓는다.
+        val contact = attacker.radius + defender.radius
+        val dist = attacker.pos.distanceTo(defender.pos)
+        if (dist < contact && outward.length() > 1e-3f) attacker.pos = defender.pos + outward * contact
+        // 부딪힌 쪽은 미끄러져 돌아 나온다(넘어뜨리지 못하면 다시 친다).
+        if (outward.length() > 1e-3f) {
+            val vn = attacker.vel.dot(outward)
+            if (vn < 0f) attacker.vel = attacker.vel - outward * (1.5f * vn)
+        }
+        attacker.vel = attacker.vel * 0.72f
+        attacker.dyn.hit(impact * 0.6f, offset = 0f, fromAbove = false)
+        // 서 있던 지우개를 옆에서 밀면 받침을 잃고 넘어간다.
+        defender.tumble += 12f + impact * 0.02f
+        defender.lean += 4f
+        defender.dyn.hit(impact * 0.5f, offset = 0f, fromAbove = false)
     }
 
     /**

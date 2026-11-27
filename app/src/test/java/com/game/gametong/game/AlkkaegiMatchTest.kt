@@ -107,7 +107,8 @@ class AlkkaegiMatchTest {
     fun `표면이 미끄러우면 같은 세기도 더 멀리 밀린다`() {
         fun pushed(surface: DeskSurface): Float {
             val m = AlkkaegiMatch(EraserType.STANDARD, EraserType.STANDARD, surface = surface, seed = 3L)
-            m.flick(Vec2(0f, -900f))
+            // 두 지우개가 책상 양 끝에 있어 상대까지 닿을 만큼은 세게 민다.
+            m.flick(Vec2(0f, -1600f))
             m.world.settle()
             return m.world.opponent.pos.y
         }
@@ -116,6 +117,21 @@ class AlkkaegiMatchTest {
         val dusty = pushed(DeskSurface.DUSTY)
         assertTrue("코팅 $coated < 나무 $wood", coated < wood)
         assertTrue("나무 $wood < 먼지 $dusty", wood < dusty)
+    }
+
+    @Test
+    fun `시작 자리는 책상 양 끝 쪽으로 충분히 벌려 둔다`() {
+        val gap = AlkkaegiMatch.PLAYER_HOME.distanceTo(AlkkaegiMatch.AI_HOME)
+        val contact = EraserType.STANDARD.radius * 2f
+        assertTrue("간격 $gap 은 한 지우개 지름($contact)의 세 배 이상", gap > contact * 3f)
+        // 양쪽 모두 지우개 반지름만큼은 책상 안에 있다.
+        assertTrue("플레이어 자리 ${AlkkaegiMatch.PLAYER_HOME.y}", AlkkaegiMatch.PLAYER_HOME.y + EraserType.STANDARD.radius < Board.HEIGHT)
+        assertTrue("AI 자리 ${AlkkaegiMatch.AI_HOME.y}", AlkkaegiMatch.AI_HOME.y - EraserType.STANDARD.radius > 0f)
+        // 첫 수에 바로 부딪히지 않는다.
+        val m = match()
+        m.flick(Vec2(0f, -900f))
+        m.world.settle()
+        assertEquals("상대는 그대로", AlkkaegiMatch.AI_HOME, m.world.opponent.pos)
     }
 
     @Test

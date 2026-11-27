@@ -139,11 +139,43 @@ data class Environment(
     val ambientSky: Color4,
     val ambientGround: Color4,
     val hazeColor: Color4 = Color4(0.85f, 0.72f, 0.55f, 1f),
+    /** 안개의 최대 세기(0~1). 1이면 먼 곳이 안개색으로 완전히 덮인다. */
     val hazeStrength: Float = 0.22f,
     val vignette: Float = 0.30f,
     /** 화면 위쪽에 번지는 햇빛(0~1). */
     val sunGlow: Float = 0.55f,
+    /**
+     * 안개가 시작되는 거리 = 카메라~무대 중심 거리 × 이 값.
+     * 1.45면 무대 네 모서리(중심에서 반지름의 1.4배 안팎)보다 바깥에서만 안개가 끼기 시작한다.
+     */
+    val hazeNearScale: Float = 1.45f,
+    /** 시작 거리에서 최대 세기에 이르는 거리(같은 배수). */
+    val hazeSpanScale: Float = 1.25f,
 )
+
+/**
+ * 거리 안개 계산.
+ *
+ * 예전에는 셰이더가 거리 8~26에서 무조건 안개색으로 덮고 [Environment.hazeStrength] 는 쓰지도 않았다.
+ * 그래서 45도로 내려다보는 세로 화면에서는 **운동장 바닥 앞쪽과 딱지까지** 안개에 잠겨
+ * 뿌옇게 보였다(카메라 거리가 20 안팎). 이제는 카메라 거리에 맞춰 시작점을 잡아
+ * **무대 안은 안개가 0** 이고, 무대 밖 먼 바닥만 세기만큼 옅게 잠긴다.
+ */
+object Haze {
+    /** 카메라~무대 중심 거리로 시작 거리·번짐 거리를 잡는다. */
+    fun rangeFor(cameraDistance: Float, env: Environment): FloatArray {
+        val d = cameraDistance.coerceAtLeast(0.001f)
+        return floatArrayOf(d * env.hazeNearScale, d * env.hazeSpanScale)
+    }
+
+    /** 어떤 거리의 안개 세기(0~[Environment.hazeStrength]). */
+    fun factorAt(distance: Float, range: FloatArray, strength: Float): Float {
+        val near = range[0]
+        val span = range[1].coerceAtLeast(0.001f)
+        val t = ((distance - near) / span).coerceIn(0f, 1f)
+        return t * strength.coerceIn(0f, 1f)
+    }
+}
 
 /** 바닥(책상·운동장). 분필 원·구멍 같은 바닥 무늬도 여기서 정한다. */
 data class GroundSpec(

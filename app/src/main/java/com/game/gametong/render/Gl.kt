@@ -148,6 +148,7 @@ object Shaders {
         uniform vec3 uCamera;
         uniform vec3 uHazeColor;
         uniform vec2 uHazeRange;
+        uniform float uHazeStrength;
         uniform float uSpecular;
         uniform float uShininess;
         uniform float uRim;
@@ -196,10 +197,10 @@ object Shaders {
                 color = mix(color, uChalkColor * (0.85 + 0.15 * ndl), ring * 0.9 * grain);
             }
 
-            // 거리 안개
+            // 거리 안개: 무대 안은 걷히고, 무대 밖 먼 바닥만 세기만큼 잠긴다(최대 1이 아닌 hazeStrength).
             float dist = length(uCamera - vW);
             float haze = clamp((dist - uHazeRange.x) / max(uHazeRange.y, 0.001), 0.0, 1.0);
-            color = mix(color, uHazeColor, haze);
+            color = mix(color, uHazeColor, haze * uHazeStrength);
 
             // 톤 매핑(부드러운 하이라이트 롤오프)
             color = color / (color + vec3(1.0)) * 1.38;

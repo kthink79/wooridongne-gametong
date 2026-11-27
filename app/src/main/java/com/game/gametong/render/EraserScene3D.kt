@@ -114,12 +114,12 @@ object EraserScene3D {
         skyTop = Color4.rgb(0xF7E7C6),
         skyBottom = Color4.rgb(0xC99B62),
         sunDir = Vec3(-0.42f, -0.80f, -0.42f).normalized(),
-        sunColor = Color4(1.0f, 0.87f, 0.66f, 1f),
-        ambientSky = Color4(0.46f, 0.47f, 0.52f, 1f),
-        ambientGround = Color4(0.40f, 0.30f, 0.20f, 1f),
+        sunColor = Color4(1.0f, 0.90f, 0.70f, 1f),
+        ambientSky = Color4(0.52f, 0.53f, 0.58f, 1f),
+        ambientGround = Color4(0.46f, 0.35f, 0.24f, 1f),
         hazeColor = Color4.rgb(0xD9B98A),
-        hazeStrength = 0.25f,
-        vignette = 0.34f,
+        hazeStrength = 0.16f,
+        vignette = 0.24f,
         sunGlow = 0.75f,
     )
 
