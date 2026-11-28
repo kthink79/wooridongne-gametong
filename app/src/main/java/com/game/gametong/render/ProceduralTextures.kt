@@ -34,6 +34,16 @@ enum class TexKind {
     CHALK,
     /** 가이드 점의 빛무리. */
     GLOW,
+
+    /**
+     * 사진에서 뽑은 원목 책상 결. 앱에 넣은 교실 책상 사진(`desk_classroom_bg.jpg`)의
+     * 나뭇결을 평탄화해 만든 텍스처(`desk_wood.jpg`)를 그대로 쓴다. 절차적 무늬가 아니라
+     * 사진이라 결이 사실적이고, 3D 책상 판이 배경 사진과 같은 나무로 이어진다.
+     */
+    PHOTO_WOOD,
+
+    /** 교실 배경 사진(창가·의자·공책, 얕은 심도). 하늘 대신 화면 뒤에 깔린다. */
+    PHOTO_ROOM,
 }
 
 /**
@@ -58,6 +68,7 @@ object ProceduralTextures {
                 val v = y.toFloat() / size
                 out[y * size + x] = when (kind) {
                     TexKind.NONE -> argb(255, 255, 255, 255)
+                    TexKind.PHOTO_WOOD, TexKind.PHOTO_ROOM -> argb(255, 255, 255, 255)
                     TexKind.WOOD -> wood(u, v)
                     TexKind.CEMENT -> cement(u, v)
                     TexKind.DIRT -> dirt(u, v)

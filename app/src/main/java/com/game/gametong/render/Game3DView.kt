@@ -20,7 +20,7 @@ class GameGlSurfaceView(context: Context, channel: SceneChannel) : GLSurfaceView
     init {
         setEGLContextClientVersion(2)
         setEGLConfigChooser(MsaaConfigChooser())
-        setRenderer(SceneRenderer(channel))
+        setRenderer(SceneRenderer(channel, context.applicationContext))
         renderMode = RENDERMODE_CONTINUOUSLY
         preserveEGLContextOnPause = true
     }

@@ -6,6 +6,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.util.Log
+import com.game.gametong.R
 import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
@@ -28,7 +29,11 @@ class SceneChannel {
  * - 모든 무늬는 [ProceduralTextures] 로 앱 안에서 굽는다(에셋 없음).
  * - 그림자는 빛 방향으로 눕힌 실루엣이라 물체가 기울면 그림자도 따라 기운다.
  */
-class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer {
+class SceneRenderer(
+    private val channel: SceneChannel,
+    /** 사진 텍스처(PHOTO_*)를 읽을 때 쓴다. 없으면 절차적 무늬만 그린다. */
+    private val context: android.content.Context? = null,
+) : GLSurfaceView.Renderer {
 
     private var lit: GlProgram? = null
     private var flat: GlProgram? = null
@@ -90,7 +95,10 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
         sky = GlProgram(
             Shaders.SKY_VERTEX, Shaders.SKY_FRAGMENT,
             listOf("aPos", "aUv"),
-            listOf("uTop", "uBottom", "uSunColor", "uSunPos", "uGlow", "uVignette"),
+            listOf(
+                "uTop", "uBottom", "uSunColor", "uSunPos", "uGlow", "uVignette",
+                "uUseTex", "uTex", "uUvTop", "uUvBottom", "uTint",
+            ),
         )
 
         lit?.error?.let { Log.w(TAG, "lit program: $it") }
@@ -149,6 +157,25 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
         GLES20.glUniform2f(program.uniform("uSunPos"), sunU, sunV)
         GLES20.glUniform1f(program.uniform("uGlow"), scene.env.sunGlow)
         GLES20.glUniform1f(program.uniform("uVignette"), scene.env.vignette)
+
+        val backdrop = scene.backdrop
+        if (backdrop != null) {
+            val tex = textureOf(backdrop.tex)
+            GLES20.glUniform1f(program.uniform("uUseTex"), if (tex != 0) 1f else 0f)
+            if (tex != 0) {
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, tex)
+                GLES20.glUniform1i(program.uniform("uTex"), 0)
+                GLES20.glUniform1f(program.uniform("uUvTop"), backdrop.uvTop)
+                GLES20.glUniform1f(program.uniform("uUvBottom"), backdrop.uvBottom)
+                GLES20.glUniform3f(
+                    program.uniform("uTint"),
+                    backdrop.tint.r, backdrop.tint.g, backdrop.tint.b,
+                )
+            }
+        } else {
+            GLES20.glUniform1f(program.uniform("uUseTex"), 0f)
+        }
 
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, skyVbo)
         val pos = program.attrib("aPos")
@@ -591,6 +618,18 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
     private fun textureOf(kind: TexKind): Int {
         if (kind == TexKind.NONE) return 0
         textures[kind]?.let { return it }
+        val photoRes = when (kind) {
+            TexKind.PHOTO_WOOD -> R.drawable.desk_wood
+            TexKind.PHOTO_ROOM -> R.drawable.desk_classroom_bg
+            else -> 0
+        }
+        if (photoRes != 0) {
+            // 나뭇결은 1024x1024(2의 거듭제곱)라 밉맵을 만들어 멀리서도 잔물결이 안 생긴다.
+            // 교실 배경은 1024x1536 이라 밉맵을 못 만든다(가장자리 늘이기).
+            val id = loadPhotoTexture(photoRes, mipmap = kind == TexKind.PHOTO_WOOD)
+            if (id != 0) textures[kind] = id
+            return id
+        }
         val pixels = ProceduralTextures.pixels(kind)
         val size = ProceduralTextures.DEFAULT_SIZE
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -607,6 +646,37 @@ class SceneRenderer(private val channel: SceneChannel) : GLSurfaceView.Renderer 
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
         bitmap.recycle()
         textures[kind] = ids[0]
+        return ids[0]
+    }
+
+    /**
+     * 사진 텍스처. 앱에 넣은 JPEG 을 그대로 올린다.
+     * 화면을 크게 덮으므로 밉맵을 만들지 않고(사진은 2의 거듭제곱이 아님) 가장자리를 늘린다.
+     */
+    private fun loadPhotoTexture(resId: Int, mipmap: Boolean): Int {
+        val ctx = context ?: return 0
+        val opts = android.graphics.BitmapFactory.Options()
+        opts.inScaled = false
+        val bitmap = android.graphics.BitmapFactory.decodeResource(ctx.resources, resId, opts)
+            ?: return 0
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        if (ids[0] == 0) {
+            bitmap.recycle()
+            return 0
+        }
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexParameteri(
+            GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER,
+            if (mipmap) GLES20.GL_LINEAR_MIPMAP_LINEAR else GLES20.GL_LINEAR,
+        )
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        if (mipmap) GLES20.glGenerateMipmap(GLES20.GL_TEXTURE_2D)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+        bitmap.recycle()
         return ids[0]
     }
 

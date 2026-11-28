@@ -220,6 +220,38 @@ data class ShadowSpec(
     val softness: Float = 1f,
 )
 
+/**
+ * 하늘 대신 화면 뒤에 깔리는 **배경 사진**.
+ *
+ * [uvTop]/[uvBottom] 은 화면 위·아래 끝에서 각각 보이는 사진의 세로 위치(0=사진 위, 1=사진 아래)다.
+ * 이 두 값으로 사진을 밀고 당겨, 사진에 찍힌 책상 끝선을 3D 책상 판의 먼 끝선에 정확히 맞춘다.
+ */
+data class Backdrop(
+    val tex: TexKind,
+    val uvTop: Float,
+    val uvBottom: Float,
+    val tint: Color4 = Color4.WHITE,
+)
+
+/** 배경 사진을 3D 책상에 맞춰 앉히는 계산(순수 함수라 테스트로 확인한다). */
+object BackdropFit {
+    /**
+     * 사진 속 책상 끝선([photoEdgeV], 사진 위에서부터 0~1)을 화면의 [deskEdgeV]
+     * (위에서부터 0~1) 자리에 놓이게 하는 (uvTop, uvBottom) 을 구한다.
+     *
+     * [scale] 은 사진을 화면보다 몇 배 크게/작게 볼지다. 1이면 화면 세로와 사진 세로가 1:1.
+     */
+    fun fit(deskEdgeV: Float, photoEdgeV: Float, scale: Float = 1f): Pair<Float, Float> {
+        val s = if (scale <= 0.01f) 1f else scale
+        val top = photoEdgeV - deskEdgeV.coerceIn(0f, 1f) * s
+        return top to (top + s)
+    }
+
+    /** (uvTop, uvBottom) 으로 화면 세로 위치 [screenV](위에서부터) 에 보이는 사진 세로 위치. */
+    fun photoVAt(screenV: Float, uvTop: Float, uvBottom: Float): Float =
+        uvBottom + (uvTop - uvBottom) * (1f - screenV)
+}
+
 /** 화면을 향하는 작은 그림(가루·먼지·불티). */
 data class SpriteSpec(
     val pos: Vec3,
@@ -245,6 +277,8 @@ data class Scene(
     val foreground: List<ItemSpec> = emptyList(),
     /** 화면 가장자리에 넘치는 꽃가루·먼지. */
     val motes: List<SpriteSpec> = emptyList(),
+    /** 하늘 대신 까는 배경 사진(교실). 없으면 하늘 그라데이션을 그린다. */
+    val backdrop: Backdrop? = null,
 ) {
     /** 이 장면이 화면 안에 들어오는지 검사할 때 쓰는 투영 도우미. */
     fun project(point: Vec3, aspect: Float = Camera.PORTRAIT_ASPECT): FloatArray? =

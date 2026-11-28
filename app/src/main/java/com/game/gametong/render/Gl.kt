@@ -228,7 +228,21 @@ object Shaders {
         uniform vec2 uSunPos;
         uniform float uGlow;
         uniform float uVignette;
+        uniform float uUseTex;
+        uniform sampler2D uTex;
+        uniform float uUvTop;
+        uniform float uUvBottom;
+        uniform vec3 uTint;
         void main() {
+            // 배경 사진이 있으면 하늘 대신 사진을 깐다(사진의 책상 끝선을 3D 책상에 맞춰 앉힌다).
+            if (uUseTex > 0.5) {
+                float pv = mix(uUvBottom, uUvTop, clamp(vUv.y, 0.0, 1.0));
+                vec3 photo = texture2D(uTex, vec2(vUv.x, pv)).rgb * uTint;
+                vec2 cc = vUv - vec2(0.5, 0.5);
+                float vig = 1.0 - uVignette * dot(cc, cc) * 1.6;
+                gl_FragColor = vec4(photo * clamp(vig, 0.0, 1.0), 1.0);
+                return;
+            }
             float t = clamp(vUv.y, 0.0, 1.0);
             vec3 color = mix(uBottom, uTop, pow(t, 0.85));
             float d = length(vUv - uSunPos);

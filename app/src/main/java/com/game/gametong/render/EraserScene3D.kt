@@ -109,6 +109,12 @@ object EraserScene3D {
     const val BOARD_W = Board.WIDTH
     const val BOARD_H = Board.HEIGHT
 
+    /**
+     * 배경 사진(`desk_classroom_bg.jpg`)에서 책상 상판이 시작하는 높이(0=사진 위, 1=사진 아래).
+     * 사진을 5.2도 돌려 책상 끝선을 수평으로 맞춘 뒤 잰 값이라, 화면 어디서나 같은 줄에 온다.
+     */
+    const val PHOTO_DESK_EDGE_V = 0.258f
+
     /** 따뜻한 오후 교실 빛. 창문 쪽(왼쪽 위)에서 해가 든다. */
     val env = Environment(
         skyTop = Color4.rgb(0xF7E7C6),
@@ -166,13 +172,14 @@ object EraserScene3D {
 
         // 책상 상판: 두께가 있는 나무 판. 윗면은 바닥면(GroundSpec)이 그린다.
         val deskThickness = 0.34f
+        // 상판 두께 상자는 바닥면(GroundSpec)과 **같은 넓이**로 둔다. 그래야 사진 배경의
+        // 책상 끝선과 3D 책상의 먼 끝선이 한 줄로 만난다.
         val deskW = BOARD_W * World.SCALE + 1.7f
-        // 뒤쪽(책상 위쪽)은 소품이 놓일 자리까지 넉넉히 넓힌다.
-        val deskD = BOARD_H * World.SCALE + 3.4f
+        val deskD = BOARD_H * World.SCALE + 1.9f
         items += ItemSpec(
             mesh = MeshKind.BOX,
             model = Mat4.trs(
-                Vec3(center.x, -deskThickness * 0.5f - 0.002f, center.z - 0.75f),
+                Vec3(center.x, -deskThickness * 0.5f - 0.002f, center.z),
                 Quat.IDENTITY,
                 Vec3(deskW, deskThickness, deskD),
             ),
@@ -181,47 +188,6 @@ object EraserScene3D {
             uvScale = 3.5f,
             specular = 0.08f,
             shininess = 20f,
-        )
-
-        // 교실 배경 소품(공책·연필·의자 등받이) — 책상 뒤쪽
-        items += ItemSpec(
-            mesh = MeshKind.BOX,
-            model = Mat4.trs(
-                Vec3(2.1f, 0.02f, -1.5f),
-                Quat.axisAngle(Vec3.UP, Math.toRadians(-9.0).toFloat()),
-                Vec3(2.7f, 0.05f, 3.3f),
-            ),
-            color = Color4.rgb(0xF6F1E3),
-            texture = TexKind.PAPER,
-            uvScale = 1.4f,
-            specular = 0.05f,
-            shininess = 8f,
-        )
-        items += ItemSpec(
-            mesh = MeshKind.CYLINDER,
-            model = Mat4.trs(
-                Vec3(6.6f, 0.09f, -2.4f),
-                Quat.axisAngle(Vec3.RIGHT, Math.toRadians(90.0).toFloat())
-                    * Quat.axisAngle(Vec3.UP, Math.toRadians(24.0).toFloat()),
-                Vec3(0.11f, 2.6f, 0.11f),
-            ),
-            color = Color4.rgb(0xE8B93C),
-            texture = TexKind.NONE,
-            specular = 0.20f,
-            shininess = 20f,
-        )
-        items += ItemSpec(
-            mesh = MeshKind.ERASER,
-            model = Mat4.trs(
-                Vec3(9.1f, 0.62f, -2.0f),
-                Quat.IDENTITY,
-                Vec3(2.4f, 2.0f, 0.22f),
-            ),
-            color = Color4.rgb(0x8B5A2B),
-            texture = TexKind.WOOD,
-            uvScale = 1.2f,
-            specular = 0.12f,
-            shininess = 24f,
         )
 
         // 지우개들: 그림자 → 몸통 → 종이 슬리브
@@ -356,26 +322,47 @@ object EraserScene3D {
             )
         }
 
+        val groundW = BOARD_W * World.SCALE + 1.7f
+        val groundD = BOARD_H * World.SCALE + 1.9f
+
+        // 나무 책상이면 사진에서 뽑은 나뭇결을 쓴다(코팅·플라스틱·철판은 절차적 무늬 유지).
+        val photoDesk = surface == DeskSurface.WOOD ||
+            surface == DeskSurface.PLYWOOD ||
+            surface == DeskSurface.DUSTY
+
+        // 배경 사진(교실)을 3D 책상 먼 끝선에 맞춰 앉힌다.
+        val deskEdgeV = camera
+            .projectToUnit(Vec3(center.x, 0f, center.z - groundD * 0.5f), aspect)
+            ?.get(1) ?: 0.20f
+        val (uvTop, uvBottom) = BackdropFit.fit(deskEdgeV, PHOTO_DESK_EDGE_V)
+
         return Scene(
             camera = camera,
             env = env,
             ground = GroundSpec(
                 center = center,
-                width = BOARD_W * World.SCALE + 1.7f,
-                depth = BOARD_H * World.SCALE + 1.9f,
-                texture = if (surface == DeskSurface.STEEL || surface == DeskSurface.PLASTIC) {
-                    TexKind.CEMENT
-                } else {
-                    TexKind.WOOD
+                width = groundW,
+                depth = groundD,
+                texture = when {
+                    surface == DeskSurface.STEEL || surface == DeskSurface.PLASTIC -> TexKind.CEMENT
+                    photoDesk -> TexKind.PHOTO_WOOD
+                    else -> TexKind.WOOD
                 },
-                uvScale = look.uvScale * 5.0f,
-                color = look.tint,
+                // 사진 나뭇결은 한 장으로 깔아 이음매가 없다.
+                uvScale = if (photoDesk) 1f else look.uvScale * 5.0f,
+                color = if (photoDesk) Color4.rgb(0xF6E6C8) else look.tint,
                 gloss = look.gloss,
             ),
             items = items,
             shadows = shadows,
             sprites = sprites,
             motes = motes,
+            backdrop = Backdrop(
+                tex = TexKind.PHOTO_ROOM,
+                uvTop = uvTop,
+                uvBottom = uvBottom,
+                tint = Color4.rgb(0xFBF0DC),
+            ),
         )
     }
 
